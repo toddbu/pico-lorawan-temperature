@@ -106,8 +106,8 @@ int main( void )
             printf("success!\n");
         }
 
-        // wait for up to 30 seconds for an event
-        if (lorawan_process_timeout_ms(30000) == 0) {
+        // wait for up to five minutes for an event
+        if (lorawan_process_timeout_ms(300000) == 0) {
             // check if a downlink message was received
             receive_length = lorawan_receive(receive_buffer, sizeof(receive_buffer), &receive_port);
             if (receive_length > -1) {
