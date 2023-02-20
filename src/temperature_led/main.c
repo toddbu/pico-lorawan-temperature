@@ -60,7 +60,14 @@ int main( void )
     //$ while (!tud_cdc_connected()) {
     //$     tight_loop_contents();
     //$ }
-    
+
+    printf("Erasing NVM ... ");
+    if (lorawan_erase_nvm() < 0) {
+        printf("failed to erase NVM!!!\n");
+    } else {
+        printf("success erasing NVM!\n");
+    }
+
     printf("Pico LoRaWAN - OTAA - Temperature + LED\n\n");
 
     // initialize the LED pin and internal temperature ADC
