@@ -14,10 +14,11 @@
 
 #include "hardware/adc.h"
 #include "hardware/gpio.h"
+#include "hardware/watchdog.h"
 
 #include "pico/stdlib.h"
 #include "pico/lorawan.h"
-#include "tusb.h"
+// #include "tusb.h"
 
 // edit with LoRaWAN Node Region and OTAA settings 
 #include "config.h"
@@ -53,20 +54,59 @@ uint8_t receive_port = 0;
 void internal_temperature_init();
 float internal_temperature_get();
 
+void machine_reset() {
+    watchdog_enable(1, 1);
+    while (1);
+}
+
+
+void erase_nvm( void ) {
+    printf("Erasing NVM ... ");
+    if (lorawan_erase_nvm() < 0) {
+        printf("failed to erase NVM!!!\n");
+        return;
+    }
+
+    printf("success erasing NVM!\n");
+}
+
+void join( void ) {
+    // initialize the LoRaWAN stack
+    printf("Initilizating LoRaWAN ... ");
+    if (lorawan_init_otaa(&sx1276_settings, LORAWAN_REGION, &otaa_settings) < 0) {
+        printf("failed to initialize OTAA - retarting!!!\n");
+        erase_nvm();
+        machine_reset();
+    }
+
+    printf("success!\n");
+
+    // Start the join process and wait
+    printf("Joining LoRaWAN network ...");
+    lorawan_join();
+
+    int seconds = 0;
+    while (!lorawan_is_joined()) {
+        lorawan_process_timeout_ms(1000);
+        printf(".");
+        if (++seconds > 120) {
+            // Give up and restart the Pico
+            printf("failed to join (timeout) - restarting!!!\n");
+            erase_nvm();
+            machine_reset();
+        }
+    }
+
+    printf(" joined successfully!\n");
+}
+
 int main( void )
 {
     // initialize stdio and wait for USB CDC connect
     stdio_init_all();
-    //$ while (!tud_cdc_connected()) {
-    //$     tight_loop_contents();
-    //$ }
-
-    printf("Erasing NVM ... ");
-    if (lorawan_erase_nvm() < 0) {
-        printf("failed to erase NVM!!!\n");
-    } else {
-        printf("success erasing NVM!\n");
-    }
+    // while (!tud_cdc_connected()) {
+    //     tight_loop_contents();
+    // }
 
     printf("Pico LoRaWAN - OTAA - Temperature + LED\n\n");
 
@@ -79,29 +119,13 @@ int main( void )
     // uncomment next line to enable debug
     // lorawan_debug(true);
 
-    // initialize the LoRaWAN stack
-    printf("Initilizating LoRaWAN ... ");
-    if (lorawan_init_otaa(&sx1276_settings, LORAWAN_REGION, &otaa_settings) < 0) {
-        printf("failed!!!\n");
-        while (1) {
-            tight_loop_contents();
-        }
-    } else {
-        printf("success!\n");
-    }
-
-    // Start the join process and wait
-    printf("Joining LoRaWAN network ...");
-    lorawan_join();
-
-    while (!lorawan_is_joined()) {
-        lorawan_process_timeout_ms(1000);
-        printf(".");
-    }
-    printf(" joined successfully!\n");
-
+    bool rejoin = true;
     // loop forever
     while (1) {
+        if (rejoin) {
+            rejoin = false;
+            join();
+        }
         // get the internal temperature
         int8_t adc_temperature_byte = internal_temperature_get();
 
@@ -109,6 +133,8 @@ int main( void )
         printf("sending internal temperature: %d °C (0x%02x)... ", adc_temperature_byte, adc_temperature_byte);
         if (lorawan_send_unconfirmed(&adc_temperature_byte, sizeof(adc_temperature_byte), 2) < 0) {
             printf("failed!!!\n");
+            rejoin = true;
+            continue;
         } else {
             printf("success!\n");
         }
