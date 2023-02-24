@@ -9,7 +9,12 @@
  * built-in LED.
  */
 
+// NOTE: The max packet size that we allow for is 11 bytes corresponding to DR0 but we prefer three bytes where possible.
+//       See https://lora-developers.semtech.com/documentation/tech-papers-and-guides/the-book/packet-size-considerations/
+//       for more info
+
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "hardware/adc.h"
@@ -18,7 +23,7 @@
 
 #include "pico/stdlib.h"
 #include "pico/lorawan.h"
-// #include "tusb.h"
+#include "tusb.h"
 
 // edit with LoRaWAN Node Region and OTAA settings 
 #include "config.h"
@@ -45,6 +50,19 @@ const struct lorawan_otaa_settings otaa_settings = {
     .channel_mask = LORAWAN_CHANNEL_MASK
 };
 
+// Message queue - 11 bytes total
+//
+// header format
+// +---------+-----------+-----------+----------------+
+// | version |    id     |   type    | content_length |
+// +---------+-----------+-----------+----------------+
+// | 0-2 (3) | 3-22 (20) | 23-27 (5) |   28-31 (4)    |
+// +---------+-----------+-----------+----------------+
+struct message_entry {
+  uint32_t header;
+  int8_t content[7];
+};
+
 // variables for receiving data
 int receive_length = 0;
 uint8_t receive_buffer[242];
@@ -58,7 +76,6 @@ void machine_reset() {
     watchdog_enable(1, 1);
     while (1);
 }
-
 
 void erase_nvm( void ) {
     printf("Erasing NVM ... ");
@@ -100,13 +117,17 @@ void join( void ) {
     printf(" joined successfully!\n");
 }
 
+void cleanup_message( struct message_entry* message ) {
+    free(message);
+}
+
 int main( void )
 {
     // initialize stdio and wait for USB CDC connect
     stdio_init_all();
-    // while (!tud_cdc_connected()) {
-    //     tight_loop_contents();
-    // }
+    while (!tud_cdc_connected()) {
+        tight_loop_contents();
+    }
 
     printf("Pico LoRaWAN - OTAA - Temperature + LED\n\n");
 
@@ -126,17 +147,43 @@ int main( void )
             rejoin = false;
             join();
         }
+
+        uint8_t version = 1;
+        uint32_t id = 1;
+        uint8_t type = 1;
+        uint8_t content_length = sizeof(int8_t);
+
         // get the internal temperature
         int8_t adc_temperature_byte = internal_temperature_get();
 
+        struct message_entry* message = (struct message_entry*) malloc(sizeof(struct message_entry));
+        message->header =
+            ((version & 0x07) << 29) |
+            ((id & 0xFFFFF) << 9) |
+            ((type & 0x1F) << 4) |
+            (content_length & 0x0F);
+
+        // uint8_t xyzzy[5];
+        // memcpy(&xyzzy[0], message, 5);
+        // int i;
+        // for (i = 0; i < 4; i++) {
+        //     printf("header byte %d: 0x%02x\n", i, xyzzy[i]);
+        // }
+        // sleep_ms(300000);
+        // continue;
+
+        memcpy(&message->content[0], &adc_temperature_byte, content_length);
+
         // send the internal temperature as a (signed) byte in an unconfirmed uplink message
-        printf("sending internal temperature: %d °C (0x%02x)... ", adc_temperature_byte, adc_temperature_byte);
-        if (lorawan_send_unconfirmed(&adc_temperature_byte, sizeof(adc_temperature_byte), 2) < 0) {
+        printf("sending internal temperature: %d °C (0x%02x)... ", message->content[0], message->content[0]);
+        if (lorawan_send_unconfirmed(message, sizeof(uint32_t) /* header length */ + content_length, 2) < 0) {
             printf("failed!!!\n");
             rejoin = true;
+            cleanup_message(message);
             continue;
         } else {
             printf("success!\n");
+            cleanup_message(message);
         }
 
         // wait for up to five minutes for an event
