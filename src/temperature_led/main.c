@@ -149,7 +149,7 @@ int main( void )
         }
 
         uint8_t version = 1;
-        uint32_t id = 1;
+        uint32_t id = 79;
         uint8_t type = 1;
         uint8_t content_length = sizeof(int8_t);
 
@@ -186,8 +186,8 @@ int main( void )
             cleanup_message(message);
         }
 
-        // wait for up to five minutes for an event
-        if (lorawan_process_timeout_ms(300000) == 0) {
+        // wait for up to 30 seconds for an event
+        if (lorawan_process_timeout_ms(30000) == 0) {
             // check if a downlink message was received
             receive_length = lorawan_receive(receive_buffer, sizeof(receive_buffer), &receive_port);
             if (receive_length > -1) {
@@ -200,8 +200,19 @@ int main( void )
 
                 // the first byte of the received message controls the on board LED
                 gpio_put(PICO_DEFAULT_LED_PIN, receive_buffer[0]);
+
+                uint32_t receive_header =
+                    (receive_buffer[3] << 24) |
+                    (receive_buffer[2] << 16) |
+                    (receive_buffer[1] << 8) |
+                    receive_buffer[0];
+                uint32_t receive_id = (receive_header >> 9) & 0xFFFFF;
+                printf("receive message id = %d\n", receive_id);
             }
         }
+
+        // now sleep for five minutes
+        sleep_ms(300000);
     }
 
     return 0;
