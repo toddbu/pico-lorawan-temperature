@@ -51,7 +51,8 @@ const struct lorawan_otaa_settings otaa_settings = {
     .channel_mask = LORAWAN_CHANNEL_MASK
 };
 
-// Message queue - 11 bytes total
+//
+// Message queue - 11 bytes of transmitted data total
 //
 // header format
 // +---------+-----------+-----------+----------------+
@@ -60,12 +61,26 @@ const struct lorawan_otaa_settings otaa_settings = {
 // | 0-2 (3) | 3-22 (20) | 23-27 (5) |   28-31 (4)    |
 // +---------+-----------+-----------+----------------+
 //
-// id calculation
+//   version - 0..7 (message version)
+//   id - 0..0xFFFFF (see below)
+//   type - (0..31) (user-defined messge type)
+//   content_length - (0..11) (length of the message content)
 //
+// id format
+// +---------+-----------+
+// |   DOW   |   time    |
+// +---------+-----------+
+// | 0-2 (3) | 3-19 (20) |
+// +---------+-----------+
+//
+//   DOW - 0..6, 0 is Sunday
+//   time - 0..86400 (seconds past midnight)
 //
 struct message_entry {
   uint32_t header;
-  int8_t content[7];
+  uint8_t content[7];
+  /* extra data that's not transmitted */
+  uint8_t content_length;
 };
 
 // variables for receiving data
@@ -127,6 +142,74 @@ void cleanup_message( struct message_entry* message ) {
 }
 
 uint32_t message_id = 0;
+struct message_entry* create_message_entry(uint8_t type, uint8_t* content, uint8_t content_length) {
+    uint8_t version = 0;
+    uint32_t id = ++message_id;
+
+    if (content_length > 7) {
+        content_length = 7;
+    }
+
+    struct message_entry* message = (struct message_entry*) malloc(sizeof(struct message_entry));
+    message->header =
+        ((version & 0x07) << 29) |
+        ((id & 0xFFFFF) << 9) |
+        ((type & 0x1F) << 4) |
+        (content_length & 0x0F);
+
+    message->content_length = content_length;
+    memcpy(&message->content[0], content, message->content_length);
+
+    // uint8_t xyzzy[4 + content_length];
+    // memcpy(&xyzzy[0], message, 4 + content_length);
+    // int i;
+    // for (i = 0; i < 4 + content_length; i++) {
+    //     printf("header byte %d: 0x%02x\n", i, xyzzy[i]);
+    // }
+    // sleep_ms(300000);
+    // continue;
+
+    return message;
+}
+
+bool transfer_data(struct message_entry* message) {
+    // send the internal temperature as a (signed) byte in an unconfirmed uplink message
+    printf("sending internal temperature: %d °C (0x%02x)... ", message->content[0], message->content[0]);
+    if (lorawan_send_unconfirmed(message, sizeof(uint32_t) /* header length */ + message->content_length, 2) < 0) {
+        printf("failed!!!\n");
+        return false;
+    }
+
+    printf("success!\n");
+
+    // wait for up to 30 seconds for an event
+    if (lorawan_process_timeout_ms(30000) == 0) {
+        // check if a downlink message was received
+        receive_length = lorawan_receive(receive_buffer, sizeof(receive_buffer), &receive_port);
+        if (receive_length > -1) {
+            printf("received a %d byte message on port %d: ", receive_length, receive_port);
+
+            for (int i = 0; i < receive_length; i++) {
+                printf("%02x", receive_buffer[i]);
+            }
+            printf("\n");
+
+            // the first byte of the received message controls the on board LED
+            gpio_put(PICO_DEFAULT_LED_PIN, receive_buffer[0]);
+
+            uint32_t receive_header =
+                (receive_buffer[3] << 24) |
+                (receive_buffer[2] << 16) |
+                (receive_buffer[1] << 8) |
+                receive_buffer[0];
+            uint32_t receive_id = (receive_header >> 9) & 0xFFFFF;
+            printf("receive message id = %d\n", receive_id);
+        }
+    }
+
+    return true;
+}
+
 int main( void )
 {
     // initialize stdio and wait for USB CDC connect
@@ -155,8 +238,6 @@ int main( void )
     rtc_init();
     rtc_set_datetime(&current_time);
     sleep_ms(1); // Let the RTC stabiize
-    bool rtc_ready = rtc_get_datetime(&current_time);
-    printf("(%d) current_year: %d\n", rtc_ready, current_time.year);
 
     // uncomment next line to enable debug
     // lorawan_debug(true);
@@ -164,72 +245,31 @@ int main( void )
     bool rejoin = true;
     // loop forever
     while (1) {
+        bool rtc_ready = rtc_get_datetime(&current_time);
+        printf("(%d) current time: %04d-%02d-%02d %02d:%02d:%02d\n",
+            rtc_ready,
+            current_time.year,
+            current_time.month,
+            current_time.day,
+            current_time.hour,
+            current_time.min,
+            current_time.sec
+        );
         if (rejoin) {
             rejoin = false;
             join();
         }
 
-        uint8_t version = 1;
-        uint32_t id = ++message_id;
-        uint8_t type = 1;
-        uint8_t content_length = sizeof(int8_t);
-
         // get the internal temperature
-        int8_t adc_temperature_byte = internal_temperature_get();
+        uint8_t adc_temperature_byte = internal_temperature_get();
+        uint8_t content_length = sizeof(adc_temperature_byte);
 
-        struct message_entry* message = (struct message_entry*) malloc(sizeof(struct message_entry));
-        message->header =
-            ((version & 0x07) << 29) |
-            ((id & 0xFFFFF) << 9) |
-            ((type & 0x1F) << 4) |
-            (content_length & 0x0F);
+        struct message_entry* message = create_message_entry(1, &adc_temperature_byte, sizeof(adc_temperature_byte));
+        rejoin = !transfer_data(message);
+        cleanup_message(message);
 
-        // uint8_t xyzzy[5];
-        // memcpy(&xyzzy[0], message, 5);
-        // int i;
-        // for (i = 0; i < 4; i++) {
-        //     printf("header byte %d: 0x%02x\n", i, xyzzy[i]);
-        // }
-        // sleep_ms(300000);
-        // continue;
-
-        memcpy(&message->content[0], &adc_temperature_byte, content_length);
-
-        // send the internal temperature as a (signed) byte in an unconfirmed uplink message
-        printf("sending internal temperature: %d °C (0x%02x)... ", message->content[0], message->content[0]);
-        if (lorawan_send_unconfirmed(message, sizeof(uint32_t) /* header length */ + content_length, 2) < 0) {
-            printf("failed!!!\n");
-            rejoin = true;
-            cleanup_message(message);
+        if (rejoin) {
             continue;
-        } else {
-            printf("success!\n");
-            cleanup_message(message);
-        }
-
-        // wait for up to 30 seconds for an event
-        if (lorawan_process_timeout_ms(30000) == 0) {
-            // check if a downlink message was received
-            receive_length = lorawan_receive(receive_buffer, sizeof(receive_buffer), &receive_port);
-            if (receive_length > -1) {
-                printf("received a %d byte message on port %d: ", receive_length, receive_port);
-
-                for (int i = 0; i < receive_length; i++) {
-                    printf("%02x", receive_buffer[i]);
-                }
-                printf("\n");
-
-                // the first byte of the received message controls the on board LED
-                gpio_put(PICO_DEFAULT_LED_PIN, receive_buffer[0]);
-
-                uint32_t receive_header =
-                    (receive_buffer[3] << 24) |
-                    (receive_buffer[2] << 16) |
-                    (receive_buffer[1] << 8) |
-                    receive_buffer[0];
-                uint32_t receive_id = (receive_header >> 9) & 0xFFFFF;
-                printf("receive message id = %d\n", receive_id);
-            }
         }
 
         // now sleep for five minutes
