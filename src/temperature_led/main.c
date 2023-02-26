@@ -20,6 +20,7 @@
 #include "hardware/adc.h"
 #include "hardware/gpio.h"
 #include "hardware/watchdog.h"
+#include "hardware/rtc.h"
 
 #include "pico/stdlib.h"
 #include "pico/lorawan.h"
@@ -58,6 +59,10 @@ const struct lorawan_otaa_settings otaa_settings = {
 // +---------+-----------+-----------+----------------+
 // | 0-2 (3) | 3-22 (20) | 23-27 (5) |   28-31 (4)    |
 // +---------+-----------+-----------+----------------+
+//
+// id calculation
+//
+//
 struct message_entry {
   uint32_t header;
   int8_t content[7];
@@ -121,6 +126,7 @@ void cleanup_message( struct message_entry* message ) {
     free(message);
 }
 
+uint32_t message_id = 0;
 int main( void )
 {
     // initialize stdio and wait for USB CDC connect
@@ -137,6 +143,21 @@ int main( void )
 
     internal_temperature_init();
 
+    datetime_t current_time;
+    current_time.year = 2023;
+    current_time.month = 2;
+    current_time.day = 26;
+    current_time.dotw = 0;
+    current_time.hour = 0;
+    current_time.min = 0;
+    current_time.sec = 0;
+
+    rtc_init();
+    rtc_set_datetime(&current_time);
+    sleep_ms(1); // Let the RTC stabiize
+    bool rtc_ready = rtc_get_datetime(&current_time);
+    printf("(%d) current_year: %d\n", rtc_ready, current_time.year);
+
     // uncomment next line to enable debug
     // lorawan_debug(true);
 
@@ -149,7 +170,7 @@ int main( void )
         }
 
         uint8_t version = 1;
-        uint32_t id = 79;
+        uint32_t id = ++message_id;
         uint8_t type = 1;
         uint8_t content_length = sizeof(int8_t);
 

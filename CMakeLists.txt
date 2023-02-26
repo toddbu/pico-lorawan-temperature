@@ -95,7 +95,7 @@ target_include_directories(pico_loramac_node INTERFACE
     ${LORAMAC_NODE_PATH}/src/system
 )
 
-target_link_libraries(pico_loramac_node INTERFACE pico_stdlib pico_unique_id hardware_spi)
+target_link_libraries(pico_loramac_node INTERFACE pico_stdlib pico_unique_id hardware_spi hardware_rtc)
 
 target_compile_definitions(pico_loramac_node INTERFACE -DSOFT_SE)
 target_compile_definitions(pico_loramac_node INTERFACE -DREGION_EU868)
