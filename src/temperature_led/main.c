@@ -173,7 +173,7 @@ struct message_entry* create_message_entry(uint8_t type, uint8_t* content, uint8
 }
 
 bool transfer_data(struct message_entry* message) {
-    // send the internal temperature as a (signed) byte in an unconfirmed uplink message
+    // send the internal temperature as an unsigned byte in an unconfirmed uplink message
     printf("sending internal temperature: %d °C (0x%02x)... ", message->content[0], message->content[0]);
     if (lorawan_send_unconfirmed(message, sizeof(uint32_t) /* header length */ + message->content_length, 2) < 0) {
         printf("failed!!!\n");
@@ -182,32 +182,54 @@ bool transfer_data(struct message_entry* message) {
 
     printf("success!\n");
 
-    // wait for up to 30 seconds for an event
-    if (lorawan_process_timeout_ms(30000) == 0) {
-        // check if a downlink message was received
-        receive_length = lorawan_receive(receive_buffer, sizeof(receive_buffer), &receive_port);
-        if (receive_length > -1) {
-            printf("received a %d byte message on port %d: ", receive_length, receive_port);
+    while (true) {
+        // wait for up to 30 seconds for an event
+        if (lorawan_process_timeout_ms(30000) == 0) {
+            // check if a downlink message was received
+            receive_length = lorawan_receive(receive_buffer, sizeof(receive_buffer) / sizeof(receive_buffer[0]), &receive_port);
+            if (receive_length > -1) {
+                printf("received a %d byte message on port %d: ", receive_length, receive_port);
 
-            for (int i = 0; i < receive_length; i++) {
-                printf("%02x", receive_buffer[i]);
+                for (int i = 0; i < receive_length; i++) {
+                    printf("%02x", receive_buffer[i]);
+                }
+                printf("\n");
+
+                if (receive_port != 1) {
+                    continue;
+                }
+
+                // the first byte of the received message controls the on board LED
+                gpio_put(PICO_DEFAULT_LED_PIN, receive_buffer[0]);
+
+                uint32_t receive_header =
+                    (receive_buffer[3] << 24) |
+                    (receive_buffer[2] << 16) |
+                    (receive_buffer[1] << 8) |
+                    receive_buffer[0];
+                uint32_t receive_id = (receive_header >> 9) & 0xFFFFF;
+                printf("receive message id = %d\n", receive_id);
             }
-            printf("\n");
 
-            // the first byte of the received message controls the on board LED
-            gpio_put(PICO_DEFAULT_LED_PIN, receive_buffer[0]);
-
-            uint32_t receive_header =
-                (receive_buffer[3] << 24) |
-                (receive_buffer[2] << 16) |
-                (receive_buffer[1] << 8) |
-                receive_buffer[0];
-            uint32_t receive_id = (receive_header >> 9) & 0xFFFFF;
-            printf("receive message id = %d\n", receive_id);
+            continue;
         }
+
+        break;
     }
 
     return true;
+}
+
+void populate_time_sync( uint8_t* time_sync ) {
+    datetime_t current_time;
+    rtc_get_datetime(&current_time);
+    time_sync[0] = current_time.year / 100;
+    time_sync[1] = current_time.year % 100;
+    time_sync[2] = current_time.month;
+    time_sync[3] = current_time.day;
+    time_sync[4] = current_time.hour;
+    time_sync[5] = current_time.min;
+    time_sync[6] = current_time.sec;
 }
 
 int main( void )
@@ -242,7 +264,22 @@ int main( void )
     // uncomment next line to enable debug
     // lorawan_debug(true);
 
-    bool rejoin = true;
+    join();
+
+    uint8_t time_sync[7];
+    populate_time_sync(&time_sync[0]);
+    struct message_entry* message = create_message_entry(0, &time_sync[0], 4 + (sizeof(time_sync) / sizeof(time_sync[0])));
+    transfer_data(message);
+    cleanup_message(message);
+
+    sleep_ms(10000);
+
+    populate_time_sync(&time_sync[0]);
+    message = create_message_entry(0, &time_sync[0], 4 + (sizeof(time_sync) / sizeof(time_sync[0])));
+    transfer_data(message);
+    cleanup_message(message);
+
+    bool rejoin = false;
     // loop forever
     while (1) {
         bool rtc_ready = rtc_get_datetime(&current_time);
@@ -264,7 +301,7 @@ int main( void )
         uint8_t adc_temperature_byte = internal_temperature_get();
         uint8_t content_length = sizeof(adc_temperature_byte);
 
-        struct message_entry* message = create_message_entry(1, &adc_temperature_byte, sizeof(adc_temperature_byte));
+        struct message_entry* message = create_message_entry(1, &adc_temperature_byte, content_length);
         rejoin = !transfer_data(message);
         cleanup_message(message);
 
