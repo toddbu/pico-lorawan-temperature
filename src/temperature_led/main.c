@@ -173,6 +173,8 @@ struct message_entry* create_message_entry(uint8_t type, uint8_t* content, uint8
 }
 
 bool transfer_data(struct message_entry* message) {
+    datetime_t current_time;
+
     // send the internal temperature as an unsigned byte in an unconfirmed uplink message
     printf("sending internal temperature: %d °C (0x%02x)... ", message->content[0], message->content[0]);
     if (lorawan_send_unconfirmed(message, sizeof(uint32_t) /* header length */ + message->content_length, 2) < 0) {
@@ -209,6 +211,38 @@ bool transfer_data(struct message_entry* message) {
                     receive_buffer[0];
                 uint32_t receive_id = (receive_header >> 9) & 0xFFFFF;
                 printf("receive message id = %d\n", receive_id);
+
+                uint32_t type = (receive_header >> 4) & 0x1F;
+                uint32_t time_offset;
+                switch (type) {
+                    case 0:
+                        rtc_get_datetime(&current_time);
+                        current_time.year += ((receive_buffer[4] - 128) * 100) + (receive_buffer[5] - 128);
+                        current_time.month += (receive_buffer[6] - 128);
+                        current_time.day += (receive_buffer[7] - 128);
+                        current_time.hour += (receive_buffer[8] - 128);
+                        current_time.min += (receive_buffer[9] - 128);
+                        current_time.sec += (receive_buffer[10] - 128);
+                        rtc_set_datetime(&current_time);
+                        sleep_ms(1); // Let the RTC stabiize
+
+                        printf("Date updated to %02d-%02d-%02d %02d:%02d:%02d\n",
+                            current_time.year,
+                            current_time.month,
+                            current_time.day,
+                            current_time.hour,
+                            current_time.min,
+                            current_time.sec
+                        );
+                        break;
+
+                    case 1:
+                        // Nothing to do
+                        break;
+
+                    default:
+                        printf("unknown message type ack: %d\n", type);
+                }
             }
 
             continue;
@@ -222,6 +256,7 @@ bool transfer_data(struct message_entry* message) {
 
 void populate_time_sync( uint8_t* time_sync ) {
     datetime_t current_time;
+
     rtc_get_datetime(&current_time);
     time_sync[0] = current_time.year / 100;
     time_sync[1] = current_time.year % 100;
