@@ -179,13 +179,52 @@ int8_t time_component_limits_min[5] = {
     1,
     1
 };
+int8_t getTimeComponentLimitMin(int component_number) {
+    return time_component_limits_min[component_number];
+}
+
 int8_t time_component_limits_max[5] = {
     60,
     60,
     24,
-    30,
+    31, // Unused, see getTimeComponentLimitMax
     12
 };
+int8_t time_component_month_limits_max[12] = {
+    31,
+    28,
+    31,
+    30,
+    31,
+    30,
+    31,
+    31,
+    30,
+    31,
+    30,
+    31
+};
+int8_t getTimeComponentLimitMax(int component_number, uint8_t month, uint16_t year) {
+    //$ printf("here0 %d\n", component_number);
+    if (component_number == 3) {
+        //$ printf("here1 %d %d\n", component_number, 3);
+        if (month == 2) {
+            //$ printf("here2 %d %d %d\n", component_number, 3, month);
+            bool is_leap_year = (((year % 4 == 0) && (year % 100) != 0) || ((year % 400) == 0));
+
+            int time_component_limit_max = time_component_month_limits_max[month - 1];
+            if (is_leap_year) {
+                time_component_limit_max++;
+            }
+
+            return time_component_limit_max;
+        }
+
+        return time_component_month_limits_max[month - 1];
+    }
+
+    return time_component_limits_max[component_number];
+}
 
 bool transfer_data(struct message_entry* message) {
     datetime_t current_time;
@@ -242,7 +281,7 @@ bool transfer_data(struct message_entry* message) {
                         current_time.hour += receive_buffer[8];
                         current_time.min += receive_buffer[9];
                         current_time.sec += receive_buffer[10];
-                        current_time.dotw = 2;
+                        current_time.dotw = 0;
 
                         int8_t* time_components[5] = {
                             &current_time.sec,
@@ -253,13 +292,19 @@ bool transfer_data(struct message_entry* message) {
                         };
 
                         for (int i = 0; i < 5; i++) {
-                          if (*time_components[i] < *time_component_limits_min) {
-                            i < 4 ? *time_components[i+1]-- : current_time.year--;
-                            *time_components[i] += time_component_limits_max[i];
-                          } else if (*time_components[i] >= time_component_limits_max[i]) {
-                            i < 4 ? *time_components[i+1]++ : current_time.year++;
-                            *time_components[i] -= time_component_limits_max[i];
-                          }
+                            int8_t time_component_limit_min = getTimeComponentLimitMin(i);
+                            int8_t time_component_limit_max = getTimeComponentLimitMax(i, current_time.month, current_time.year);
+
+                            printf("%d, min = %d, max = %d, mon = %d, year = %d, tc[i] = %d,\n", i, getTimeComponentLimitMin(i), getTimeComponentLimitMax(i, current_time.month, current_time.year), current_time.month, current_time.year, *time_components[i]);
+                            if (*time_components[i] < time_component_limit_min) {
+                                i < 4 ? (*time_components[i+1])-- : current_time.year--;
+                                *time_components[i] += time_component_limit_max;
+                            } else if (*time_components[i] >= (time_component_limit_max + time_component_limit_min)) {
+                                printf("< %d: *time_components[i+1] = %d\n", i, *time_components[i+1]);
+                                i < 4 ? (*time_components[i+1])++ : current_time.year++;
+                                printf("> %d: *time_components[i+1] = %d\n", i, *time_components[i+1]);
+                                *time_components[i] -= time_component_limit_max;
+                            }
                         }
 
                         printf("Setting time to %02d-%02d-%02d %02d:%02d:%02d (%d)\n",
