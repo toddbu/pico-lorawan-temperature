@@ -160,17 +160,32 @@ struct message_entry* create_message_entry(uint8_t type, uint8_t* content, uint8
     message->content_length = content_length;
     memcpy(&message->content[0], content, message->content_length);
 
-    // uint8_t xyzzy[4 + content_length];
-    // memcpy(&xyzzy[0], message, 4 + content_length);
+    // uint8_t time_components[4 + content_length];
+    // memcpy(&time_components[0], message, 4 + content_length);
     // int i;
     // for (i = 0; i < 4 + content_length; i++) {
-    //     printf("header byte %d: 0x%02x\n", i, xyzzy[i]);
+    //     printf("header byte %d: 0x%02x\n", i, time_components[i]);
     // }
     // sleep_ms(300000);
     // continue;
 
     return message;
 }
+
+int8_t time_component_limits_min[5] = {
+    0,
+    0,
+    0,
+    1,
+    1
+};
+int8_t time_component_limits_max[5] = {
+    60,
+    60,
+    24,
+    30,
+    12
+};
 
 bool transfer_data(struct message_entry* message) {
     datetime_t current_time;
@@ -217,22 +232,58 @@ bool transfer_data(struct message_entry* message) {
                 switch (type) {
                     case 0:
                         rtc_get_datetime(&current_time);
-                        current_time.year += ((receive_buffer[4] - 128) * 100) + (receive_buffer[5] - 128);
-                        current_time.month += (receive_buffer[6] - 128);
-                        current_time.day += (receive_buffer[7] - 128);
-                        current_time.hour += (receive_buffer[8] - 128);
-                        current_time.min += (receive_buffer[9] - 128);
-                        current_time.sec += (receive_buffer[10] - 128);
-                        rtc_set_datetime(&current_time);
-                        sleep_ms(1); // Let the RTC stabiize
+                        for (int i = 4; i < 11; i++) {
+                            receive_buffer[i] -= 128;
+                        }
 
-                        printf("Date updated to %02d-%02d-%02d %02d:%02d:%02d\n",
+                        current_time.year += (receive_buffer[4] * 100) + receive_buffer[5];
+                        current_time.month += receive_buffer[6];
+                        current_time.day += receive_buffer[7];
+                        current_time.hour += receive_buffer[8];
+                        current_time.min += receive_buffer[9];
+                        current_time.sec += receive_buffer[10];
+                        current_time.dotw = 2;
+
+                        int8_t* time_components[5] = {
+                            &current_time.sec,
+                            &current_time.min,
+                            &current_time.hour,
+                            &current_time.day,
+                            &current_time.month
+                        };
+
+                        for (int i = 0; i < 5; i++) {
+                          if (*time_components[i] < *time_component_limits_min) {
+                            i < 4 ? *time_components[i+1]-- : current_time.year--;
+                            *time_components[i] += time_component_limits_max[i];
+                          } else if (*time_components[i] >= time_component_limits_max[i]) {
+                            i < 4 ? *time_components[i+1]++ : current_time.year++;
+                            *time_components[i] -= time_component_limits_max[i];
+                          }
+                        }
+
+                        printf("Setting time to %02d-%02d-%02d %02d:%02d:%02d (%d)\n",
                             current_time.year,
                             current_time.month,
                             current_time.day,
                             current_time.hour,
                             current_time.min,
-                            current_time.sec
+                            current_time.sec,
+                            current_time.dotw
+                        );
+
+                        rtc_set_datetime(&current_time);
+                        sleep_ms(1); // Let the RTC stabiize
+
+                        rtc_get_datetime(&current_time);
+                        printf("Date updated to %02d-%02d-%02d %02d:%02d:%02d (%d)\n",
+                            current_time.year,
+                            current_time.month,
+                            current_time.day,
+                            current_time.hour,
+                            current_time.min,
+                            current_time.sec,
+                            current_time.dotw
                         );
                         break;
 
