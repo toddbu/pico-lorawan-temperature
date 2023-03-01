@@ -295,14 +295,14 @@ bool transfer_data(struct message_entry* message) {
                             int8_t time_component_limit_min = getTimeComponentLimitMin(i);
                             int8_t time_component_limit_max = getTimeComponentLimitMax(i, current_time.month, current_time.year);
 
-                            printf("%d, min = %d, max = %d, mon = %d, year = %d, tc[i] = %d,\n", i, getTimeComponentLimitMin(i), getTimeComponentLimitMax(i, current_time.month, current_time.year), current_time.month, current_time.year, *time_components[i]);
+                            //$ printf("%d, min = %d, max = %d, mon = %d, year = %d, tc[i] = %d,\n", i, getTimeComponentLimitMin(i), getTimeComponentLimitMax(i, current_time.month, current_time.year), current_time.month, current_time.year, *time_components[i]);
                             if (*time_components[i] < time_component_limit_min) {
                                 i < 4 ? (*time_components[i+1])-- : current_time.year--;
                                 *time_components[i] += time_component_limit_max;
                             } else if (*time_components[i] >= (time_component_limit_max + time_component_limit_min)) {
-                                printf("< %d: *time_components[i+1] = %d\n", i, *time_components[i+1]);
+                                //$ printf("< %d: *time_components[i+1] = %d\n", i, *time_components[i+1]);
                                 i < 4 ? (*time_components[i+1])++ : current_time.year++;
-                                printf("> %d: *time_components[i+1] = %d\n", i, *time_components[i+1]);
+                                //$ printf("> %d: *time_components[i+1] = %d\n", i, *time_components[i+1]);
                                 *time_components[i] -= time_component_limit_max;
                             }
                         }
