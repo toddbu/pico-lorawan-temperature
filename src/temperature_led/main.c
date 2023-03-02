@@ -247,7 +247,7 @@ int8_t calculate_dow(int8_t day, int8_t month, int16_t year) {
     year = year % 100;
     day_of_week += year + (year / 4);
     day_of_week = day_of_week % 7;
-    printf("day = %d, m = %d, y = %d\n", day, month, year);
+    //$ printf("day = %d, m = %d, y = %d\n", day, month, year);
 
     return day_of_week;
 }
@@ -395,6 +395,12 @@ void populate_time_sync( uint8_t* time_sync ) {
     time_sync[6] = current_time.sec;
 }
 
+void populate_time_sync_nop( uint8_t* time_sync ) {
+    for (int i = 0; i < 7; i++) {
+        time_sync[i] = 0;
+    }
+}
+
 int main( void )
 {
     // initialize stdio and wait for USB CDC connect
@@ -437,7 +443,7 @@ int main( void )
 
     sleep_ms(10000);
 
-    populate_time_sync(&time_sync[0]);
+    populate_time_sync_nop(&time_sync[0]);
     message = create_message_entry(0, &time_sync[0], 4 + (sizeof(time_sync) / sizeof(time_sync[0])));
     transfer_data(message);
     cleanup_message(message);
