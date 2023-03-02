@@ -56,17 +56,17 @@ const struct lorawan_otaa_settings otaa_settings = {
 //
 // header format
 // +---------+-----------+-----------+----------------+
-// | version |    id     |   type    | content_length |
+// | version | timestamp |   type    | content_length |
 // +---------+-----------+-----------+----------------+
 // | 0-2 (3) | 3-22 (20) | 23-27 (5) |   28-31 (4)    |
 // +---------+-----------+-----------+----------------+
 //
 //   version - 0..7 (message version)
-//   id - 0..0xFFFFF (see below)
+//   timestamp - 0..0xFFFFF (see below)
 //   type - (0..31) (user-defined messge type)
 //   content_length - (0..11) (length of the message content)
 //
-// id format
+// timestamp format
 // +---------+-----------+
 // |   DOW   |   time    |
 // +---------+-----------+
@@ -136,10 +136,20 @@ void cleanup_message( struct message_entry* message ) {
     free(message);
 }
 
-uint32_t message_id = 0;
+uint32_t create_message_timestamp() {
+    datetime_t current_time;
+
+    rtc_get_datetime(&current_time);
+
+    return (current_time.dotw << 17) +
+           current_time.hour * 3600 +
+           current_time.min * 60 +
+           current_time.sec;
+}
+
 struct message_entry* create_message_entry(uint8_t type, uint8_t* content, uint8_t content_length) {
     uint8_t version = 0;
-    uint32_t id = ++message_id;
+    uint32_t timestamp = create_message_timestamp();
 
     if (content_length > 7) {
         content_length = 7;
@@ -148,7 +158,7 @@ struct message_entry* create_message_entry(uint8_t type, uint8_t* content, uint8
     struct message_entry* message = (struct message_entry*) malloc(sizeof(struct message_entry));
     message->header =
         ((version & 0x07) << 29) |
-        ((id & 0xFFFFF) << 9) |
+        ((timestamp & 0xFFFFF) << 9) |
         ((type & 0x1F) << 4) |
         (content_length & 0x0F);
 
@@ -292,8 +302,8 @@ bool transfer_data(struct message_entry* message) {
                     (receive_buffer[2] << 16) |
                     (receive_buffer[1] << 8) |
                     receive_buffer[0];
-                uint32_t receive_id = (receive_header >> 9) & 0xFFFFF;
-                printf("receive message id = %d\n", receive_id);
+                uint32_t receive_timestamp = (receive_header >> 9) & 0xFFFFF;
+                printf("receive message timestamp = %d, dow = %d, time = %d\n", receive_timestamp, receive_timestamp >> 17, receive_timestamp & 0x1FFFF);
 
                 uint32_t type = (receive_header >> 4) & 0x1F;
                 uint32_t time_offset;
