@@ -83,11 +83,6 @@ struct message_entry {
   uint8_t content_length;
 };
 
-// variables for receiving data
-int receive_length = 0;
-uint8_t receive_buffer[242];
-uint8_t receive_port = 0;
-
 // functions used in main
 void internal_temperature_init();
 float internal_temperature_get();
@@ -172,6 +167,10 @@ struct message_entry* create_message_entry(uint8_t type, uint8_t* content, uint8
     return message;
 }
 
+bool is_leap_year(int16_t year) {
+    return (((year % 4 == 0) && (year % 100) != 0) || ((year % 400) == 0));
+}
+
 int8_t time_component_limits_min[5] = {
     0,
     0,
@@ -204,16 +203,14 @@ int8_t time_component_month_limits_max[12] = {
     30,
     31
 };
-int8_t getTimeComponentLimitMax(int component_number, uint8_t month, uint16_t year) {
+int8_t getTimeComponentLimitMax(int component_number, int8_t month, int16_t year) {
     //$ printf("here0 %d\n", component_number);
     if (component_number == 3) {
         //$ printf("here1 %d %d\n", component_number, 3);
         if (month == 2) {
             //$ printf("here2 %d %d %d\n", component_number, 3, month);
-            bool is_leap_year = (((year % 4 == 0) && (year % 100) != 0) || ((year % 400) == 0));
-
             int time_component_limit_max = time_component_month_limits_max[month - 1];
-            if (is_leap_year) {
+            if (is_leap_year(year)) {
                 time_component_limit_max++;
             }
 
@@ -226,7 +223,39 @@ int8_t getTimeComponentLimitMax(int component_number, uint8_t month, uint16_t ye
     return time_component_limits_max[component_number];
 }
 
+int8_t month_key[12] = {
+    1,
+    4,
+    4,
+    0,
+    2,
+    5,
+    0,
+    3,
+    6,
+    1,
+    4,
+    6
+};
+int8_t calculate_dow(int8_t day, int8_t month, int16_t year) {
+    int8_t day_of_week =
+        day +
+        month_key[month - 1] +
+        ((month == 1 || month == 2) && is_leap_year(year) ? -1 : 0) -
+        1 - // Take one off from 2000 - 2099
+        1;  // Shift from Sat = 0 to Sun = 0
+    year = year % 100;
+    day_of_week += year + (year / 4);
+    day_of_week = day_of_week % 7;
+    printf("day = %d, m = %d, y = %d\n", day, month, year);
+
+    return day_of_week;
+}
+
 bool transfer_data(struct message_entry* message) {
+    int receive_length = 0;
+    uint8_t receive_buffer[242];
+    uint8_t receive_port = 0;
     datetime_t current_time;
 
     // send the internal temperature as an unsigned byte in an unconfirmed uplink message
@@ -306,6 +335,9 @@ bool transfer_data(struct message_entry* message) {
                                 *time_components[i] -= time_component_limit_max;
                             }
                         }
+
+                        // Calculate the day of week
+                        current_time.dotw = calculate_dow(current_time.day, current_time.month, current_time.year);
 
                         printf("Setting time to %02d-%02d-%02d %02d:%02d:%02d (%d)\n",
                             current_time.year,
