@@ -415,9 +415,9 @@ int main( void )
 {
     // initialize stdio and wait for USB CDC connect
     stdio_init_all();
-    while (!tud_cdc_connected()) {
-        tight_loop_contents();
-    }
+    //$ while (!tud_cdc_connected()) {
+    //$     tight_loop_contents();
+    //$ }
 
     printf("Pico LoRaWAN - OTAA - Temperature + LED\n\n");
 
