@@ -421,6 +421,10 @@ int main( void )
 
     printf("Pico LoRaWAN - OTAA - Temperature + LED\n\n");
 
+    // If your device can't seem to connect then uncomment the line
+    // below to remove any existing device info
+    // erase_nvm();
+
     // initialize the LED pin and internal temperature ADC
     gpio_init(PICO_DEFAULT_LED_PIN);
     gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
