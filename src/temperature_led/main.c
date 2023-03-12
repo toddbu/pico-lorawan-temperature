@@ -415,12 +415,11 @@ void sync_time( bool initialize ) {
     datetime_t current_time;
 
     if (initialize) {
-        // Initialize the realtime clock. We arbitrarily set it to the date that this code
-        // was written
-        current_time.year = 2023;
-        current_time.month = 2;
-        current_time.day = 26;
-        current_time.dotw = 0;
+        // Initialize the realtime clock. We arbitrarily set it to Jan 1, 2000
+        current_time.year = 2000;
+        current_time.month = 1;
+        current_time.day = 1;
+        current_time.dotw = 6;
         current_time.hour = 0;
         current_time.min = 0;
         current_time.sec = 0;
@@ -429,18 +428,45 @@ void sync_time( bool initialize ) {
         sleep_ms(1); // Let the RTC stabiize
     }
 
-    uint8_t time_sync[7];
-    populate_time_sync(&time_sync[0]);
-    struct message_entry* message = create_message_entry(0, &time_sync[0], 4 + (sizeof(time_sync) / sizeof(time_sync[0])));
-    transfer_data(message);
-    cleanup_message(message);
+    while (1) {
+        // First, send the message with our current time
+        uint8_t time_sync[7];
+        populate_time_sync(&time_sync[0]);
+        struct message_entry* message = create_message_entry(0, &time_sync[0], 4 + (sizeof(time_sync) / sizeof(time_sync[0])));
+        if (!transfer_data(message)) {
+            join();
+            continue;
+        }
+        cleanup_message(message);
 
-    sleep_ms(10000);
+        // Wait for the server to send back a downlink with the offset
+        sleep_ms(10000);
 
-    populate_time_sync_nop(&time_sync[0]);
-    message = create_message_entry(0, &time_sync[0], 4 + (sizeof(time_sync) / sizeof(time_sync[0])));
-    transfer_data(message);
-    cleanup_message(message);
+        // If we're initializing then we want to block the sync_time call until we can set
+        // the time for the first time. Otherwise we just wait until the downlink response
+        // would normally be processed. And what if that normal processing response is lost?
+        // Oh well, we'll retry again soon as part of our regular time sync so no big deal
+        if (initialize) {
+            // Go pick up the new timestamp
+            populate_time_sync_nop(&time_sync[0]);
+            message = create_message_entry(0, &time_sync[0], 4 + (sizeof(time_sync) / sizeof(time_sync[0])));
+            if (!transfer_data(message)) {
+                join();
+                continue;
+            }
+            cleanup_message(message);
+
+            // Check to see if our clock was adjusted beyond its initial value. If it was then
+            // we'll assume that the value was received correctly or that the time adjustment
+            // value was lost
+            bool rtc_ready = rtc_get_datetime(&current_time);
+            if (current_time.year > 2000) {
+                break;
+            }
+
+            // If we get here then we'll automatically retry in the while loop above
+        }
+    }
 }
 
 int main( void )
