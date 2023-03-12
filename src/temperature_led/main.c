@@ -411,8 +411,42 @@ void populate_time_sync_nop( uint8_t* time_sync ) {
     }
 }
 
+void sync_time( bool initialize ) {
+    datetime_t current_time;
+
+    if (initialize) {
+        // Initialize the realtime clock. We arbitrarily set it to the date that this code
+        // was written
+        current_time.year = 2023;
+        current_time.month = 2;
+        current_time.day = 26;
+        current_time.dotw = 0;
+        current_time.hour = 0;
+        current_time.min = 0;
+        current_time.sec = 0;
+        rtc_init();
+        rtc_set_datetime(&current_time);
+        sleep_ms(1); // Let the RTC stabiize
+    }
+
+    uint8_t time_sync[7];
+    populate_time_sync(&time_sync[0]);
+    struct message_entry* message = create_message_entry(0, &time_sync[0], 4 + (sizeof(time_sync) / sizeof(time_sync[0])));
+    transfer_data(message);
+    cleanup_message(message);
+
+    sleep_ms(10000);
+
+    populate_time_sync_nop(&time_sync[0]);
+    message = create_message_entry(0, &time_sync[0], 4 + (sizeof(time_sync) / sizeof(time_sync[0])));
+    transfer_data(message);
+    cleanup_message(message);
+}
+
 int main( void )
 {
+    datetime_t current_time;
+
     // initialize stdio and wait for USB CDC connect
     stdio_init_all();
     //$ while (!tud_cdc_connected()) {
@@ -431,36 +465,14 @@ int main( void )
 
     internal_temperature_init();
 
-    datetime_t current_time;
-    current_time.year = 2023;
-    current_time.month = 2;
-    current_time.day = 26;
-    current_time.dotw = 0;
-    current_time.hour = 0;
-    current_time.min = 0;
-    current_time.sec = 0;
-
-    rtc_init();
-    rtc_set_datetime(&current_time);
-    sleep_ms(1); // Let the RTC stabiize
-
     // uncomment next line to enable debug
     // lorawan_debug(true);
 
+    // Join the server
     join();
 
-    uint8_t time_sync[7];
-    populate_time_sync(&time_sync[0]);
-    struct message_entry* message = create_message_entry(0, &time_sync[0], 4 + (sizeof(time_sync) / sizeof(time_sync[0])));
-    transfer_data(message);
-    cleanup_message(message);
-
-    sleep_ms(10000);
-
-    populate_time_sync_nop(&time_sync[0]);
-    message = create_message_entry(0, &time_sync[0], 4 + (sizeof(time_sync) / sizeof(time_sync[0])));
-    transfer_data(message);
-    cleanup_message(message);
+    // Get the current date and time from the remote end
+    sync_time( true );
 
     bool rejoin = false;
     // loop forever
