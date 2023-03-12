@@ -439,14 +439,14 @@ void sync_time( bool initialize ) {
         }
         cleanup_message(message);
 
-        // Wait for the server to send back a downlink with the offset
-        sleep_ms(10000);
-
         // If we're initializing then we want to block the sync_time call until we can set
         // the time for the first time. Otherwise we just wait until the downlink response
         // would normally be processed. And what if that normal processing response is lost?
         // Oh well, we'll retry again soon as part of our regular time sync so no big deal
         if (initialize) {
+            // Wait for the server to send back a downlink with the offset
+            sleep_ms(10000);
+
             // Go pick up the new timestamp
             populate_time_sync_nop(&time_sync[0]);
             message = create_message_entry(0, &time_sync[0], 4 + (sizeof(time_sync) / sizeof(time_sync[0])));
@@ -465,6 +465,8 @@ void sync_time( bool initialize ) {
             }
 
             // If we get here then we'll automatically retry in the while loop above
+        } else {
+            break;
         }
     }
 }
