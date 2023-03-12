@@ -1,5 +1,6 @@
 /*
- * Copyright (c) 2021 Arm Limited and Contributors. All rights reserved.
+ * Copyright (c) 2023 Todd Buiten.
+ * Portions copyright (c) 2021 Arm Limited and Contributors. All rights reserved.
  *
  * SPDX-License-Identifier: BSD-3-Clause
  * 
@@ -81,7 +82,10 @@ struct message_entry {
   uint8_t content[7];
   /* extra data that's not transmitted */
   uint8_t content_length;
+  struct message_entry* next;
+  bool guaranteed_delivery;
 };
+struct message_entry* message_queue = NULL;
 
 // functions used in main
 void internal_temperature_init();
@@ -133,6 +137,26 @@ void join( void ) {
 }
 
 void cleanup_message( struct message_entry* message ) {
+    if (message == NULL) {
+        return;
+    }
+
+    if (message_queue == message) {
+        message_queue = message->next;
+    } else {
+        struct message_entry* previous = message_queue;
+        struct message_entry* current = message_queue->next;
+        while (current != NULL) {
+            if (current == message) {
+                previous->next = current->next;
+                break;
+            }
+
+            previous = current;
+            current = current->next;
+        }
+    }
+
     free(message);
 }
 
@@ -147,7 +171,7 @@ uint32_t create_message_timestamp() {
            current_time.sec;
 }
 
-struct message_entry* create_message_entry(uint8_t type, uint8_t* content, uint8_t content_length) {
+void create_message_entry(uint8_t type, uint8_t* content, uint8_t content_length, bool guaranteed_delivery) {
     uint8_t version = 0;
     uint32_t timestamp = create_message_timestamp();
 
@@ -163,6 +187,9 @@ struct message_entry* create_message_entry(uint8_t type, uint8_t* content, uint8
         (content_length & 0x0F);
 
     message->content_length = content_length;
+    message->next = message_queue;
+    message_queue = message;
+    message->guaranteed_delivery = guaranteed_delivery;
     memcpy(&message->content[0], content, message->content_length);
 
     // uint8_t time_components[4 + content_length];
@@ -173,8 +200,22 @@ struct message_entry* create_message_entry(uint8_t type, uint8_t* content, uint8
     // }
     // sleep_ms(300000);
     // continue;
+}
 
-    return message;
+struct message_entry* match_message_by_timestamp( uint32_t response_timestamp ) {
+    struct message_entry* current = message_queue;
+
+    while (current != NULL) {
+        uint32_t message_timestamp = (current->header >> 9) & 0xFFFFF;
+
+        if (response_timestamp == message_timestamp) {
+            break;
+        }
+
+        current = current->next;
+    }
+
+    return current;
 }
 
 bool is_leap_year(int16_t year) {
@@ -262,17 +303,28 @@ int8_t calculate_dow(int8_t day, int8_t month, int16_t year) {
     return day_of_week;
 }
 
-bool transfer_data(struct message_entry* message) {
+bool transfer_data() {
     int receive_length = 0;
     uint8_t receive_buffer[242];
     uint8_t receive_port = 0;
     datetime_t current_time;
 
+    struct message_entry* message = message_queue;
+
     // send the internal temperature as an unsigned byte in an unconfirmed uplink message
     printf("sending internal temperature: %d °C (0x%02x)... ", message->content[0], message->content[0]);
     if (lorawan_send_unconfirmed(message, sizeof(uint32_t) /* header length */ + message->content_length, 2) < 0) {
         printf("failed!!!\n");
+
+        if (!message->guaranteed_delivery) {
+            cleanup_message(message);
+        }
+
         return false;
+    }
+
+    if (!message->guaranteed_delivery) {
+        cleanup_message(message);
     }
 
     printf("success!\n");
@@ -304,6 +356,8 @@ bool transfer_data(struct message_entry* message) {
                     receive_buffer[0];
                 uint32_t receive_timestamp = (receive_header >> 9) & 0xFFFFF;
                 printf("receive message timestamp = %d, dow = %d, time = %d\n", receive_timestamp, receive_timestamp >> 17, receive_timestamp & 0x1FFFF);
+
+                cleanup_message(match_message_by_timestamp(receive_timestamp));
 
                 uint32_t type = (receive_header >> 4) & 0x1F;
                 uint32_t time_offset;
@@ -432,12 +486,11 @@ void sync_time( bool initialize ) {
         // First, send the message with our current time
         uint8_t time_sync[7];
         populate_time_sync(&time_sync[0]);
-        struct message_entry* message = create_message_entry(0, &time_sync[0], 4 + (sizeof(time_sync) / sizeof(time_sync[0])));
-        if (!transfer_data(message)) {
+        create_message_entry(0, &time_sync[0], 4 + (sizeof(time_sync) / sizeof(time_sync[0])), false);
+        if (!transfer_data()) {
             join();
             continue;
         }
-        cleanup_message(message);
 
         // If we're initializing then we want to block the sync_time call until we can set
         // the time for the first time. Otherwise we just wait until the downlink response
@@ -449,12 +502,11 @@ void sync_time( bool initialize ) {
 
             // Go pick up the new timestamp
             populate_time_sync_nop(&time_sync[0]);
-            message = create_message_entry(0, &time_sync[0], 4 + (sizeof(time_sync) / sizeof(time_sync[0])));
-            if (!transfer_data(message)) {
+            create_message_entry(0, &time_sync[0], 4 + (sizeof(time_sync) / sizeof(time_sync[0])), false);
+            if (!transfer_data()) {
                 join();
                 continue;
             }
-            cleanup_message(message);
 
             // Check to see if our clock was adjusted beyond its initial value. If it was then
             // we'll assume that the value was received correctly or that the time adjustment
@@ -524,9 +576,8 @@ int main( void )
         uint8_t adc_temperature_byte = internal_temperature_get();
         uint8_t content_length = sizeof(adc_temperature_byte);
 
-        struct message_entry* message = create_message_entry(1, &adc_temperature_byte, content_length);
-        rejoin = !transfer_data(message);
-        cleanup_message(message);
+        create_message_entry(1, &adc_temperature_byte, content_length, true);
+        rejoin = !transfer_data();
 
         if (rejoin) {
             continue;
