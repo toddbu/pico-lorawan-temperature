@@ -218,42 +218,29 @@ struct message_entry* match_message_by_timestamp( uint32_t response_timestamp ) 
     return current;
 }
 
+uint32_t queued_message_count() {
+    struct message_entry* current = message_queue;
+    uint32_t count = 0;
+
+    while (current != NULL) {
+        count++;
+        current = current->next;
+    }
+
+    return count;
+}
+
 bool is_leap_year(int16_t year) {
     return (((year % 4 == 0) && (year % 100) != 0) || ((year % 400) == 0));
 }
 
-int8_t time_component_limits_min[5] = {
-    0,
-    0,
-    0,
-    1,
-    1
-};
+int8_t time_component_limits_min[5] = { 0, 0, 0, 1, 1 };
 int8_t getTimeComponentLimitMin(int component_number) {
     return time_component_limits_min[component_number];
 }
 
-int8_t time_component_limits_max[5] = {
-    60,
-    60,
-    24,
-    31, // Unused, see getTimeComponentLimitMax
-    12
-};
-int8_t time_component_month_limits_max[12] = {
-    31,
-    28,
-    31,
-    30,
-    31,
-    30,
-    31,
-    31,
-    30,
-    31,
-    30,
-    31
-};
+int8_t time_component_limits_max[5] = { 60, 60, 24, 31 /* Unused, see getTimeComponentLimitMax */, 12 };
+int8_t time_component_month_limits_max[12] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
 int8_t getTimeComponentLimitMax(int component_number, int8_t month, int16_t year) {
     //$ printf("here0 %d\n", component_number);
     if (component_number == 3) {
@@ -274,20 +261,7 @@ int8_t getTimeComponentLimitMax(int component_number, int8_t month, int16_t year
     return time_component_limits_max[component_number];
 }
 
-int8_t month_key[12] = {
-    1,
-    4,
-    4,
-    0,
-    2,
-    5,
-    0,
-    3,
-    6,
-    1,
-    4,
-    6
-};
+int8_t month_key[12] = { 1, 4, 4, 0, 2, 5, 0, 3, 6, 1, 4, 6 };
 int8_t calculate_dow(int8_t day, int8_t month, int16_t year) {
     int8_t day_of_week =
         day +
@@ -558,14 +532,15 @@ int main( void )
     // loop forever
     while (1) {
         bool rtc_ready = rtc_get_datetime(&current_time);
-        printf("(%d) current time: %04d-%02d-%02d %02d:%02d:%02d\n",
+        printf("(%d) current time: %04d-%02d-%02d %02d:%02d:%02d, queued message count: %d\n",
             rtc_ready,
             current_time.year,
             current_time.month,
             current_time.day,
             current_time.hour,
             current_time.min,
-            current_time.sec
+            current_time.sec,
+            queued_message_count()
         );
         if (rejoin) {
             rejoin = false;
