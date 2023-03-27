@@ -30,6 +30,8 @@
 // edit with LoRaWAN Node Region and OTAA settings 
 #include "config.h"
 
+#define REMAINING_RETRIES 3
+
 // pin configuration for SX1276 radio module
 const struct lorawan_sx1276_settings sx1276_settings = {
     .spi = {
@@ -84,6 +86,7 @@ struct message_entry {
   uint8_t content_length;
   struct message_entry* next;
   bool guaranteed_delivery;
+  uint8_t remaining_retries;
 };
 struct message_entry* message_queue = NULL;
 
@@ -190,6 +193,7 @@ void create_message_entry(uint8_t type, uint8_t* content, uint8_t content_length
     message->next = message_queue;
     message_queue = message;
     message->guaranteed_delivery = guaranteed_delivery;
+    message->remaining_retries = 0;
     memcpy(&message->content[0], content, message->content_length);
 
     // uint8_t time_components[4 + content_length];
@@ -285,136 +289,144 @@ bool transfer_data() {
 
     struct message_entry* message = message_queue;
 
-    // send the internal temperature as an unsigned byte in an unconfirmed uplink message
-    printf("sending internal temperature: %d °C (0x%02x)... ", message->content[0], message->content[0]);
-    if (lorawan_send_unconfirmed(message, sizeof(uint32_t) /* header length */ + message->content_length, 2) < 0) {
-        printf("failed!!!\n");
+    while (message) {
+        if (message->remaining_retries-- <= 0) {
+            // send the internal temperature as an unsigned byte in an unconfirmed uplink message
+            printf("sending internal temperature: %d °C (0x%02x)... ", message->content[0], message->content[0]);
+            if (lorawan_send_unconfirmed(message, sizeof(uint32_t) /* header length */ + message->content_length, 2) < 0) {
+                printf("failed!!!\n");
 
-        if (!message->guaranteed_delivery) {
-            cleanup_message(message);
-        }
-
-        return false;
-    }
-
-    if (!message->guaranteed_delivery) {
-        cleanup_message(message);
-    }
-
-    printf("success!\n");
-
-    while (true) {
-        // wait for up to 30 seconds for an event
-        if (lorawan_process_timeout_ms(30000) == 0) {
-            // check if a downlink message was received
-            receive_length = lorawan_receive(receive_buffer, sizeof(receive_buffer) / sizeof(receive_buffer[0]), &receive_port);
-            if (receive_length > -1) {
-                printf("received a %d byte message on port %d: ", receive_length, receive_port);
-
-                for (int i = 0; i < receive_length; i++) {
-                    printf("%02x", receive_buffer[i]);
-                }
-                printf("\n");
-
-                if (receive_port != 1) {
-                    continue;
+                if (!message->guaranteed_delivery) {
+                    cleanup_message(message);
                 }
 
-                // the first byte of the received message controls the on board LED
-                gpio_put(PICO_DEFAULT_LED_PIN, receive_buffer[0]);
-
-                uint32_t receive_header =
-                    (receive_buffer[3] << 24) |
-                    (receive_buffer[2] << 16) |
-                    (receive_buffer[1] << 8) |
-                    receive_buffer[0];
-                uint32_t receive_timestamp = (receive_header >> 9) & 0xFFFFF;
-                printf("receive message timestamp = %d, dow = %d, time = %d\n", receive_timestamp, receive_timestamp >> 17, receive_timestamp & 0x1FFFF);
-
-                cleanup_message(match_message_by_timestamp(receive_timestamp));
-
-                uint32_t type = (receive_header >> 4) & 0x1F;
-                uint32_t time_offset;
-                switch (type) {
-                    case 0:
-                        rtc_get_datetime(&current_time);
-                        for (int i = 4; i < 11; i++) {
-                            receive_buffer[i] -= 128;
-                        }
-
-                        current_time.year += (receive_buffer[4] * 100) + receive_buffer[5];
-                        current_time.month += receive_buffer[6];
-                        current_time.day += receive_buffer[7];
-                        current_time.hour += receive_buffer[8];
-                        current_time.min += receive_buffer[9];
-                        current_time.sec += receive_buffer[10];
-                        current_time.dotw = 0;
-
-                        int8_t* time_components[5] = {
-                            &current_time.sec,
-                            &current_time.min,
-                            &current_time.hour,
-                            &current_time.day,
-                            &current_time.month
-                        };
-
-                        for (int i = 0; i < 5; i++) {
-                            int8_t time_component_limit_min = getTimeComponentLimitMin(i);
-                            int8_t time_component_limit_max = getTimeComponentLimitMax(i, current_time.month, current_time.year);
-
-                            //$ printf("%d, min = %d, max = %d, mon = %d, year = %d, tc[i] = %d,\n", i, getTimeComponentLimitMin(i), getTimeComponentLimitMax(i, current_time.month, current_time.year), current_time.month, current_time.year, *time_components[i]);
-                            if (*time_components[i] < time_component_limit_min) {
-                                i < 4 ? (*time_components[i+1])-- : current_time.year--;
-                                *time_components[i] += time_component_limit_max;
-                            } else if (*time_components[i] >= (time_component_limit_max + time_component_limit_min)) {
-                                //$ printf("< %d: *time_components[i+1] = %d\n", i, *time_components[i+1]);
-                                i < 4 ? (*time_components[i+1])++ : current_time.year++;
-                                //$ printf("> %d: *time_components[i+1] = %d\n", i, *time_components[i+1]);
-                                *time_components[i] -= time_component_limit_max;
-                            }
-                        }
-
-                        // Calculate the day of week
-                        current_time.dotw = calculate_dow(current_time.day, current_time.month, current_time.year);
-
-                        printf("Setting time to %02d-%02d-%02d %02d:%02d:%02d (%d)\n",
-                            current_time.year,
-                            current_time.month,
-                            current_time.day,
-                            current_time.hour,
-                            current_time.min,
-                            current_time.sec,
-                            current_time.dotw
-                        );
-
-                        rtc_set_datetime(&current_time);
-                        sleep_ms(1); // Let the RTC stabiize
-
-                        rtc_get_datetime(&current_time);
-                        printf("Date updated to %02d-%02d-%02d %02d:%02d:%02d (%d)\n",
-                            current_time.year,
-                            current_time.month,
-                            current_time.day,
-                            current_time.hour,
-                            current_time.min,
-                            current_time.sec,
-                            current_time.dotw
-                        );
-                        break;
-
-                    case 1:
-                        // Nothing to do
-                        break;
-
-                    default:
-                        printf("unknown message type ack: %d\n", type);
-                }
+                return false;
             }
 
-            continue;
+            if (!message->guaranteed_delivery) {
+                cleanup_message(message);
+            }
+
+            printf("success!\n");
+
+            message->remaining_retries = REMAINING_RETRIES;
         }
 
-        break;
+        while (true) {
+            // wait for up to 30 seconds for an event
+            if (lorawan_process_timeout_ms(30000) == 0) {
+                // check if a downlink message was received
+                receive_length = lorawan_receive(receive_buffer, sizeof(receive_buffer) / sizeof(receive_buffer[0]), &receive_port);
+                if (receive_length > -1) {
+                    printf("received a %d byte message on port %d: ", receive_length, receive_port);
+
+                    for (int i = 0; i < receive_length; i++) {
+                        printf("%02x", receive_buffer[i]);
+                    }
+                    printf("\n");
+
+                    if (receive_port != 1) {
+                        continue;
+                    }
+
+                    // the first byte of the received message controls the on board LED
+                    gpio_put(PICO_DEFAULT_LED_PIN, receive_buffer[0]);
+
+                    uint32_t receive_header =
+                        (receive_buffer[3] << 24) |
+                        (receive_buffer[2] << 16) |
+                        (receive_buffer[1] << 8) |
+                        receive_buffer[0];
+                    uint32_t receive_timestamp = (receive_header >> 9) & 0xFFFFF;
+                    printf("receive message timestamp = %d, dow = %d, time = %d\n", receive_timestamp, receive_timestamp >> 17, receive_timestamp & 0x1FFFF);
+
+                    cleanup_message(match_message_by_timestamp(receive_timestamp));
+
+                    uint32_t type = (receive_header >> 4) & 0x1F;
+                    uint32_t time_offset;
+                    switch (type) {
+                        case 0:
+                            rtc_get_datetime(&current_time);
+                            for (int i = 4; i < 11; i++) {
+                                receive_buffer[i] -= 128;
+                            }
+
+                            current_time.year += (receive_buffer[4] * 100) + receive_buffer[5];
+                            current_time.month += receive_buffer[6];
+                            current_time.day += receive_buffer[7];
+                            current_time.hour += receive_buffer[8];
+                            current_time.min += receive_buffer[9];
+                            current_time.sec += receive_buffer[10];
+                            current_time.dotw = 0;
+
+                            int8_t* time_components[5] = {
+                                &current_time.sec,
+                                &current_time.min,
+                                &current_time.hour,
+                                &current_time.day,
+                                &current_time.month
+                            };
+
+                            for (int i = 0; i < 5; i++) {
+                                int8_t time_component_limit_min = getTimeComponentLimitMin(i);
+                                int8_t time_component_limit_max = getTimeComponentLimitMax(i, current_time.month, current_time.year);
+
+                                //$ printf("%d, min = %d, max = %d, mon = %d, year = %d, tc[i] = %d,\n", i, getTimeComponentLimitMin(i), getTimeComponentLimitMax(i, current_time.month, current_time.year), current_time.month, current_time.year, *time_components[i]);
+                                if (*time_components[i] < time_component_limit_min) {
+                                    i < 4 ? (*time_components[i+1])-- : current_time.year--;
+                                    *time_components[i] += time_component_limit_max;
+                                } else if (*time_components[i] >= (time_component_limit_max + time_component_limit_min)) {
+                                    //$ printf("< %d: *time_components[i+1] = %d\n", i, *time_components[i+1]);
+                                    i < 4 ? (*time_components[i+1])++ : current_time.year++;
+                                    //$ printf("> %d: *time_components[i+1] = %d\n", i, *time_components[i+1]);
+                                    *time_components[i] -= time_component_limit_max;
+                                }
+                            }
+
+                            // Calculate the day of week
+                            current_time.dotw = calculate_dow(current_time.day, current_time.month, current_time.year);
+
+                            printf("Setting time to %02d-%02d-%02d %02d:%02d:%02d (%d)\n",
+                                current_time.year,
+                                current_time.month,
+                                current_time.day,
+                                current_time.hour,
+                                current_time.min,
+                                current_time.sec,
+                                current_time.dotw
+                            );
+
+                            rtc_set_datetime(&current_time);
+                            sleep_ms(1); // Let the RTC stabiize
+
+                            rtc_get_datetime(&current_time);
+                            printf("Date updated to %02d-%02d-%02d %02d:%02d:%02d (%d)\n",
+                                current_time.year,
+                                current_time.month,
+                                current_time.day,
+                                current_time.hour,
+                                current_time.min,
+                                current_time.sec,
+                                current_time.dotw
+                            );
+                            break;
+
+                        case 1:
+                            // Nothing to do
+                            break;
+
+                        default:
+                            printf("unknown message type ack: %d\n", type);
+                    }
+                }
+
+                continue;
+            }
+
+            break;
+        }
+
+        message = message->next;
     }
 
     return true;
