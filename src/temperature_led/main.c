@@ -24,6 +24,8 @@
 #include "hardware/rtc.h"
 
 #include "pico/stdlib.h"
+#include "pico/multicore.h"
+#include "pico/critical_section.h"
 #include "pico/lorawan.h"
 #include "tusb.h"
 
@@ -89,6 +91,7 @@ struct message_entry {
   uint8_t remaining_retries;
 };
 struct message_entry* message_queue = NULL;
+static critical_section_t message_queue_cri_sec;
 
 // functions used in main
 void internal_temperature_init();
@@ -144,6 +147,7 @@ void cleanup_message( struct message_entry* message ) {
         return;
     }
 
+    critical_section_enter_blocking(&message_queue_cri_sec);
     if (message_queue == message) {
         message_queue = message->next;
     } else {
@@ -159,6 +163,7 @@ void cleanup_message( struct message_entry* message ) {
             current = current->next;
         }
     }
+    critical_section_exit(&message_queue_cri_sec);
 
     free(message);
 }
@@ -190,11 +195,15 @@ void create_message_entry(uint8_t type, uint8_t* content, uint8_t content_length
         (content_length & 0x0F);
 
     message->content_length = content_length;
-    message->next = message_queue;
-    message_queue = message;
     message->guaranteed_delivery = guaranteed_delivery;
     message->remaining_retries = 0;
     memcpy(&message->content[0], content, message->content_length);
+
+    // Hook our message into the queue
+    critical_section_enter_blocking(&message_queue_cri_sec);
+    message->next = message_queue;
+    message_queue = message;
+    critical_section_exit(&message_queue_cri_sec);
 
     // uint8_t time_components[4 + content_length];
     // memcpy(&time_components[0], message, 4 + content_length);
@@ -288,6 +297,11 @@ bool transfer_data() {
     datetime_t current_time;
 
     struct message_entry* message = message_queue;
+
+    // Since we're a Class A device, if there are no uplinks then there are no downlinks either
+    if (message == NULL) {
+        return true;
+    }
 
     while (message) {
         if (message->remaining_retries-- <= 0) {
@@ -509,36 +523,8 @@ void sync_time( bool initialize ) {
     }
 }
 
-int main( void )
-{
+void service_messages() {
     datetime_t current_time;
-
-    // initialize stdio and wait for USB CDC connect
-    stdio_init_all();
-    //$ while (!tud_cdc_connected()) {
-    //$     tight_loop_contents();
-    //$ }
-
-    printf("Pico LoRaWAN - OTAA - Temperature + LED\n\n");
-
-    // If your device can't seem to connect then uncomment the line
-    // below to remove any existing device info
-    // erase_nvm();
-
-    // initialize the LED pin and internal temperature ADC
-    gpio_init(PICO_DEFAULT_LED_PIN);
-    gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
-
-    internal_temperature_init();
-
-    // uncomment next line to enable debug
-    // lorawan_debug(true);
-
-    // Join the server
-    join();
-
-    // Get the current date and time from the remote end
-    sync_time( true );
 
     bool rejoin = false;
     // loop forever
@@ -559,22 +545,69 @@ int main( void )
             join();
         }
 
-        // get the internal temperature
-        uint8_t adc_temperature_byte = internal_temperature_get();
-        uint8_t content_length = sizeof(adc_temperature_byte);
-
-        create_message_entry(1, &adc_temperature_byte, content_length, true);
         rejoin = !transfer_data();
 
         if (rejoin) {
             continue;
         }
 
+        // now sleep for 10 seconds
+        sleep_ms(10000);
+    }
+}
+
+void service_interrupts( void ) {
+    while (true) {
+        // get the internal temperature
+        uint8_t adc_temperature_byte = internal_temperature_get();
+        uint8_t content_length = sizeof(adc_temperature_byte);
+
+        printf("Writing temperature to message queue\n");
+        create_message_entry(1, &adc_temperature_byte, content_length, true);
+
         // now sleep for five minutes
         sleep_ms(300000);
     }
+}
 
-    return 0;
+int main( void )
+{
+    // initialize stdio and wait for USB CDC connect
+    stdio_init_all();
+    //$ while (!tud_cdc_connected()) {
+    //$     tight_loop_contents();
+    //$ }
+
+    printf("Pico LoRaWAN - OTAA - Temperature + LED\n\n");
+
+    // If your device can't seem to connect then uncomment the line
+    // below to remove any existing device info
+    // erase_nvm();
+
+    // initialize the LED pin and internal temperature ADC
+    gpio_init(PICO_DEFAULT_LED_PIN);
+    gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
+
+    critical_section_init(&message_queue_cri_sec);
+
+    internal_temperature_init();
+
+    // uncomment next line to enable debug
+    // lorawan_debug(true);
+
+    // Join the server
+    join();
+
+    // Get the current date and time from the remote end
+    sync_time( true );
+
+    printf("Hooking in service_interrupts\n");
+    multicore_launch_core1(&service_interrupts);
+
+    service_messages();
+
+    // If we get here then there must have been an error
+    return 1;
 }
 
 void internal_temperature_init()
