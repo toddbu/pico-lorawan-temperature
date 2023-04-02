@@ -85,6 +85,7 @@ struct message_entry {
   uint32_t header;
   uint8_t content[7];
   /* extra data that's not transmitted */
+  uint8_t f_port;
   uint8_t content_length;
   struct message_entry* next;
   bool guaranteed_delivery;
@@ -179,7 +180,7 @@ uint32_t create_message_timestamp() {
            current_time.sec;
 }
 
-void create_message_entry(uint8_t type, uint8_t* content, uint8_t content_length, bool guaranteed_delivery) {
+void create_message_entry(uint8_t f_port, uint8_t type, uint8_t* content, uint8_t content_length, bool guaranteed_delivery) {
     uint8_t version = 0;
     uint32_t timestamp = create_message_timestamp();
 
@@ -194,6 +195,7 @@ void create_message_entry(uint8_t type, uint8_t* content, uint8_t content_length
         ((type & 0x1F) << 4) |
         (content_length & 0x0F);
 
+    message->f_port = f_port;
     message->content_length = content_length;
     message->guaranteed_delivery = guaranteed_delivery;
     message->remaining_retries = 0;
@@ -307,7 +309,7 @@ bool transfer_data() {
         if (message->remaining_retries-- <= 0) {
             // send the internal temperature as an unsigned byte in an unconfirmed uplink message
             printf("sending internal temperature: %d °C (0x%02x)... ", message->content[0], message->content[0]);
-            if (lorawan_send_unconfirmed(message, sizeof(uint32_t) /* header length */ + message->content_length, 2) < 0) {
+            if (lorawan_send_unconfirmed(message, sizeof(uint32_t) /* header length */ + message->content_length, message->f_port) < 0) {
                 printf("failed!!!\n");
 
                 if (!message->guaranteed_delivery) {
@@ -339,7 +341,7 @@ bool transfer_data() {
                     }
                     printf("\n");
 
-                    if (receive_port != 1) {
+                    if (receive_port != 222) {
                         continue;
                     }
 
@@ -486,7 +488,7 @@ void sync_time( bool initialize ) {
         // First, send the message with our current time
         uint8_t time_sync[7];
         populate_time_sync(&time_sync[0]);
-        create_message_entry(0, &time_sync[0], 4 + (sizeof(time_sync) / sizeof(time_sync[0])), false);
+        create_message_entry(222, 0, &time_sync[0], 4 + (sizeof(time_sync) / sizeof(time_sync[0])), false);
         if (!transfer_data()) {
             join();
             continue;
@@ -502,7 +504,7 @@ void sync_time( bool initialize ) {
 
             // Go pick up the new timestamp
             populate_time_sync_nop(&time_sync[0]);
-            create_message_entry(0, &time_sync[0], 4 + (sizeof(time_sync) / sizeof(time_sync[0])), false);
+            create_message_entry(222, 0, &time_sync[0], 4 + (sizeof(time_sync) / sizeof(time_sync[0])), false);
             if (!transfer_data()) {
                 join();
                 continue;
@@ -563,7 +565,7 @@ void service_interrupts( void ) {
         uint8_t content_length = sizeof(adc_temperature_byte);
 
         printf("Writing temperature to message queue\n");
-        create_message_entry(1, &adc_temperature_byte, content_length, true);
+        create_message_entry(1, 1, &adc_temperature_byte, content_length, true);
 
         // now sleep for five minutes
         sleep_ms(300000);
