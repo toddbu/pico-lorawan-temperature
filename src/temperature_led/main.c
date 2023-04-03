@@ -360,6 +360,7 @@ void sync_time_on_timestamp( uint8_t* receive_buffer) {
     );
 }
 
+bool skip_first_received_messages = true;
 bool transfer_data() {
     int receive_length = 0;
     uint8_t receive_buffer[242];
@@ -374,8 +375,13 @@ bool transfer_data() {
 
     while (message) {
         if (message->remaining_retries-- <= 0) {
-            // send the internal temperature as an unsigned byte in an unconfirmed uplink message
-            printf("sending internal temperature: %d °C (0x%02x)... ", message->content[0], message->content[0]);
+            if (message->f_port == 1) {
+                printf("sending internal temperature: %d °C (0x%02x)... ", message->content[0], message->content[0]);
+            } else {
+                printf("sending time sync message... ");
+            }
+
+            // send the message as a series of unsigned bytes in an unconfirmed uplink message
             if (lorawan_send_unconfirmed(message, sizeof(uint32_t) /* header length */ + message->content_length, message->f_port) < 0) {
                 printf("failed!!!\n");
 
@@ -400,7 +406,19 @@ bool transfer_data() {
             if (lorawan_process_timeout_ms(30000) == 0) {
                 // check if a downlink message was received
                 receive_length = lorawan_receive(receive_buffer, sizeof(receive_buffer) / sizeof(receive_buffer[0]), &receive_port);
-                if (receive_length > -1) {
+                if (receive_length >= 0) {
+                    // If the application restarts we could have a leftover time sync downlink
+                    // message being held at the gateway. If the restart happens during the initial time sync
+                    // then we can have two "gross" adjustments where we change the year by many multiples.
+                    // For example, receiving two adjustments for the date 3/2/2023 will push our clock out
+                    // to June 2046. To combat this problem, we drain any messages in the gateway when the
+                    // app first starts up. If we do happen to discard something important then it should be
+                    // retransmitted
+                    if (skip_first_received_messages) {
+                        printf("Skipping buffered receive message from previous session\n");
+                        continue;
+                    }
+
                     printf("received a %d byte message on port %d: ", receive_length, receive_port);
 
                     for (int i = 0; i < receive_length; i++) {
@@ -446,6 +464,8 @@ bool transfer_data() {
 
                 continue;
             }
+
+            skip_first_received_messages = false;
 
             break;
         }
