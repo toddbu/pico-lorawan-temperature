@@ -90,6 +90,7 @@ struct message_entry {
   struct message_entry* next;
   bool guaranteed_delivery;
   uint8_t remaining_retries;
+  uint8_t dow;
 };
 struct message_entry* message_queue = NULL;
 static critical_section_t message_queue_cri_sec;
@@ -199,6 +200,7 @@ void create_message_entry(uint8_t f_port, uint8_t type, uint8_t* content, uint8_
     message->content_length = content_length;
     message->guaranteed_delivery = guaranteed_delivery;
     message->remaining_retries = 0;
+    message->dow = (timestamp >> 17) & 0x07;
     memcpy(&message->content[0], content, message->content_length);
 
     // Hook our message into the queue
@@ -587,7 +589,31 @@ void service_messages() {
     }
 }
 
-bool scheduled_time_sync( repeating_timer_t* time_sync_timer ) {
+bool scheduled_daily_tasks( repeating_timer_t* time_sync_timer ) {
+    datetime_t current_time;
+    uint8_t expired_dow;
+    struct message_entry* current = message_queue;
+
+
+    // Walk the list of unacknowledged messages, looking for those that are expired.
+    // We don't need to worry about new messages showing up on the message queue
+    // since new messsages always appear at the head of the queue. We do, however,
+    // need to worry about deleting messages in the list since in theory we could get
+    // an ACK back on a message at the same time that we are about to delete it. The
+    // probablility of this happening is extremely slim, however, so we'll just
+    // let the watchdog deal with this case for now
+    printf("Cleaning up dead messages\n");
+    rtc_get_datetime(&current_time);
+    expired_dow = (current_time.dotw + 2) % 7;
+    while (current != NULL) {
+        if (expired_dow == current->dow) {
+            cleanup_message(current);
+        }
+
+        current = current->next;
+    }
+
+
     printf("Daily time sync\n");
     sync_time(false);
 }
@@ -596,8 +622,8 @@ void service_interrupts( void ) {
     static struct repeating_timer time_sync_timer;
 
     // Once per day, schedule a time sync
-    //$ add_repeating_timer_ms(86400000, scheduled_time_sync, NULL, &time_sync_timer);
-    add_repeating_timer_ms(3600000, scheduled_time_sync, NULL, &time_sync_timer);
+    //$ add_repeating_timer_ms(86400000, scheduled_daily_tasks, NULL, &time_sync_timer);
+    add_repeating_timer_ms(3600000, scheduled_daily_tasks, NULL, &time_sync_timer);
 
     while (true) {
         // get the internal temperature
