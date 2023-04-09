@@ -32,6 +32,7 @@
 // edit with LoRaWAN Node Region and OTAA settings 
 #include "config.h"
 
+#define MESSAGE_VERSION 0
 #define REMAINING_RETRIES 3
 
 // pin configuration for SX1276 radio module
@@ -75,7 +76,7 @@ const struct lorawan_otaa_settings otaa_settings = {
 // +---------+-----------+
 // |   DOW   |   time    |
 // +---------+-----------+
-// | 0-2 (3) | 3-19 (20) |
+// | 0-2 (3) | 3-19 (17) |
 // +---------+-----------+
 //
 //   DOW - 0..6, 0 is Sunday
@@ -85,7 +86,9 @@ struct message_entry {
   uint32_t header;
   uint8_t content[7];
   /* extra data that's not transmitted */
+  uint8_t version;
   uint8_t f_port;
+  uint8_t type;
   uint8_t content_length;
   struct message_entry* next;
   bool guaranteed_delivery;
@@ -182,7 +185,6 @@ uint32_t create_message_timestamp() {
 }
 
 void create_message_entry(uint8_t f_port, uint8_t type, uint8_t* content, uint8_t content_length, bool guaranteed_delivery) {
-    uint8_t version = 0;
     uint32_t timestamp = create_message_timestamp();
 
     if (content_length > 7) {
@@ -191,12 +193,14 @@ void create_message_entry(uint8_t f_port, uint8_t type, uint8_t* content, uint8_
 
     struct message_entry* message = (struct message_entry*) malloc(sizeof(struct message_entry));
     message->header =
-        ((version & 0x07) << 29) |
+        ((MESSAGE_VERSION & 0x07) << 29) |
         ((timestamp & 0xFFFFF) << 9) |
         ((type & 0x1F) << 4) |
         (content_length & 0x0F);
 
+    message->version = MESSAGE_VERSION;
     message->f_port = f_port;
+    message->type = type;
     message->content_length = content_length;
     message->guaranteed_delivery = guaranteed_delivery;
     message->remaining_retries = 0;
@@ -219,13 +223,14 @@ void create_message_entry(uint8_t f_port, uint8_t type, uint8_t* content, uint8_
     // continue;
 }
 
-struct message_entry* match_message_by_timestamp( uint32_t response_timestamp ) {
+struct message_entry* match_message_by_header( uint8_t version, uint8_t receive_port, uint8_t type, uint32_t response_timestamp ) {
     struct message_entry* current = message_queue;
 
     while (current != NULL) {
         uint32_t message_timestamp = (current->header >> 9) & 0xFFFFF;
 
-        if (response_timestamp == message_timestamp) {
+        if ((receive_port == current->f_port) &&
+            (response_timestamp == message_timestamp)) {
             break;
         }
 
@@ -378,7 +383,23 @@ bool transfer_data() {
     while (message) {
         if (message->remaining_retries-- <= 0) {
             if (message->f_port == 1) {
-                printf("sending internal temperature: %d °C (0x%02x)... ", message->content[0], message->content[0]);
+                switch (message->type) {
+                    case 1:
+                        printf("sending internal temperature: %d °C (0x%02x)... ", message->content[0], message->content[0]);
+                        break;
+
+                    case 2:
+                        printf("sending top door status: %d... ", message->content[0]);
+                        break;
+
+                    case 3:
+                        printf("sending bottom door status: %d... ", message->content[0]);
+                        break;
+
+                    default:
+                        printf("Unknown messsage type on f_port 1: d...", message->type);
+                        break;
+                }
             } else {
                 printf("sending time sync message... ");
             }
@@ -433,33 +454,37 @@ bool transfer_data() {
                         (receive_buffer[2] << 16) |
                         (receive_buffer[1] << 8) |
                         receive_buffer[0];
+                    uint8_t receive_version = (receive_header >> 29) & 0x07;
                     uint32_t receive_timestamp = (receive_header >> 9) & 0xFFFFF;
+                    uint8_t receive_type = (receive_header >> 4) & 0x1F;
                     printf("receive message timestamp = %d, dow = %d, time = %d\n", receive_timestamp, receive_timestamp >> 17, receive_timestamp & 0x1FFFF);
 
-                    cleanup_message(match_message_by_timestamp(receive_timestamp));
+                    cleanup_message(match_message_by_header(receive_version, receive_port, receive_type, receive_timestamp));
 
-                    uint32_t type = (receive_header >> 4) & 0x1F;
                     uint32_t time_offset;
                     switch (receive_port) {
                         case 222:
-                            switch (type) {
+                            switch (receive_type) {
                                 case 0:
                                     sync_time_on_timestamp(&receive_buffer[0]);
                                     break;
 
                                 default:
-                                    printf("Unknown system message (port 222), type = %d", type);
+                                    printf("Unknown system message (port 222), type = %d", receive_type);
                                     break;
                             }
                             break;
 
                         case 1:
-                            // the first byte of the received message controls the on board LED
-                            gpio_put(PICO_DEFAULT_LED_PIN, receive_buffer[0]);
-                            break;
+                            switch (receive_type) {
+                                case 1:
+                                    // the first byte of the received message controls the on board LED
+                                    gpio_put(PICO_DEFAULT_LED_PIN, receive_buffer[0]);
+                                    break;
+                            }
 
                         default:
-                            printf("unknown message type ack: %d\n", type);
+                            printf("unknown message type ack: %d\n", receive_type);
                             break;
                     }
                 }
@@ -518,7 +543,7 @@ void sync_time( bool initialize ) {
         // First, send the message with our current time
         uint8_t time_sync[7];
         populate_time_sync(&time_sync[0]);
-        create_message_entry(222, 0, &time_sync[0], 4 + (sizeof(time_sync) / sizeof(time_sync[0])), false);
+        create_message_entry(222, 0, &time_sync[0], 4 + (sizeof(time_sync) / sizeof(time_sync[0])), !initialize);
 
         // If we're initializing then we want to block the sync_time call until we can set
         // the time for the first time. Otherwise we just wait until the downlink response
@@ -618,12 +643,38 @@ bool scheduled_daily_tasks( repeating_timer_t* time_sync_timer ) {
     sync_time(false);
 }
 
+void handle_gpio_irqs( uint gpio, uint32_t events ) {
+    uint8_t content;
+
+    switch (gpio) {
+        case 0:
+            content = (events & GPIO_IRQ_EDGE_RISE ? 1 : 0);
+            create_message_entry(1, 2, &content, 1, true);
+            break;
+
+        case 1:
+            content = (events & GPIO_IRQ_EDGE_RISE ? 1 : 0);
+            create_message_entry(1, 3, &content, 1, true);
+            break;
+    }
+}
+
 void service_interrupts( void ) {
     static struct repeating_timer time_sync_timer;
 
     // Once per day, schedule a time sync
     //$ add_repeating_timer_ms(86400000, scheduled_daily_tasks, NULL, &time_sync_timer);
     add_repeating_timer_ms(3600000, scheduled_daily_tasks, NULL, &time_sync_timer);
+
+    // Enable our GPIO IRQs
+    gpio_init(0);
+    gpio_set_dir(0, GPIO_IN);
+    gpio_pull_up(0);
+    gpio_set_irq_enabled_with_callback(0, GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, true, &handle_gpio_irqs);
+    gpio_init(1);
+    gpio_set_dir(1, GPIO_IN);
+    gpio_pull_up(1);
+    gpio_set_irq_enabled(1, GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, true);
 
     while (true) {
         // get the internal temperature
