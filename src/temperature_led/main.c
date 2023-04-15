@@ -482,6 +482,7 @@ bool transfer_data() {
                                     gpio_put(PICO_DEFAULT_LED_PIN, receive_buffer[0]);
                                     break;
                             }
+                            break;
 
                         default:
                             printf("unknown message type ack: %d\n", receive_type);
@@ -644,16 +645,14 @@ bool scheduled_daily_tasks( repeating_timer_t* time_sync_timer ) {
 }
 
 void handle_gpio_irqs( uint gpio, uint32_t events ) {
-    uint8_t content;
+    uint8_t content = (events & GPIO_IRQ_EDGE_RISE ? 1 : 0);
 
     switch (gpio) {
         case 0:
-            content = (events & GPIO_IRQ_EDGE_RISE ? 1 : 0);
             create_message_entry(1, 2, &content, 1, true);
             break;
 
         case 1:
-            content = (events & GPIO_IRQ_EDGE_RISE ? 1 : 0);
             create_message_entry(1, 3, &content, 1, true);
             break;
     }
