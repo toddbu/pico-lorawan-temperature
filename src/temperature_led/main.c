@@ -17,6 +17,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <malloc.h>
+#include <time.h>
 
 #include "hardware/adc.h"
 #include "hardware/gpio.h"
@@ -34,6 +36,22 @@
 
 #define MESSAGE_VERSION 0
 #define REMAINING_RETRIES 3
+
+uint32_t getTotalHeap(void) {
+   extern char __StackLimit, __bss_end__;
+
+   return &__StackLimit  - &__bss_end__;
+}
+
+uint32_t getFreeHeap(void) {
+   struct mallinfo m = mallinfo();
+
+   return getTotalHeap() - m.uordblks;
+}
+
+uint64_t get_us_since_boot() {
+    return to_us_since_boot(get_absolute_time());
+}
 
 // pin configuration for SX1276 radio module
 const struct lorawan_sx1276_settings sx1276_settings = {
@@ -213,14 +231,7 @@ void create_message_entry(uint8_t f_port, uint8_t type, uint8_t* content, uint8_
     message_queue = message;
     critical_section_exit(&message_queue_cri_sec);
 
-    // uint8_t time_components[4 + content_length];
-    // memcpy(&time_components[0], message, 4 + content_length);
-    // int i;
-    // for (i = 0; i < 4 + content_length; i++) {
-    //     printf("header byte %d: 0x%02x\n", i, time_components[i]);
-    // }
-    // sleep_ms(300000);
-    // continue;
+    printf("Free heap available: %d\n", getFreeHeap());
 }
 
 struct message_entry* match_message_by_header( uint8_t version, uint8_t receive_port, uint8_t type, uint32_t response_timestamp ) {
@@ -644,8 +655,14 @@ bool scheduled_daily_tasks( repeating_timer_t* time_sync_timer ) {
     sync_time(false);
 }
 
+uint64_t debounce[40];
 void handle_gpio_irqs( uint gpio, uint32_t events ) {
     uint8_t content = (events & GPIO_IRQ_EDGE_RISE ? 1 : 0);
+    if (get_us_since_boot() - 1000000 < debounce[gpio]) {
+        return;
+    }
+
+    debounce[gpio] = get_us_since_boot();
 
     switch (gpio) {
         case 0:
@@ -660,6 +677,11 @@ void handle_gpio_irqs( uint gpio, uint32_t events ) {
 
 void service_interrupts( void ) {
     static struct repeating_timer time_sync_timer;
+
+    // Initialize our debounce array
+    for (int i = 0; i < 40; i++) {
+        debounce[i] = 0;
+    }
 
     // Once per day, schedule a time sync
     //$ add_repeating_timer_ms(86400000, scheduled_daily_tasks, NULL, &time_sync_timer);

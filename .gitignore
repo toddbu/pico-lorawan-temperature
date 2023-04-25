@@ -13,3 +13,5 @@ _deps
 build/
 
 config_production.h
+
+screenlog.*
