@@ -19,6 +19,7 @@
 #include <string.h>
 #include <malloc.h>
 #include <time.h>
+#include <inttypes.h>
 
 #include "hardware/adc.h"
 #include "hardware/gpio.h"
@@ -35,7 +36,7 @@
 #include "config.h"
 
 #define MESSAGE_VERSION 0
-#define REMAINING_RETRIES 3
+#define MESSAGE_TIMEOUT 600000000
 
 uint32_t getTotalHeap(void) {
    extern char __StackLimit, __bss_end__;
@@ -110,7 +111,7 @@ struct message_entry {
   uint8_t content_length;
   struct message_entry* next;
   bool guaranteed_delivery;
-  uint8_t remaining_retries;
+  uint64_t send_time;
   uint8_t dow;
 };
 struct message_entry* message_queue = NULL;
@@ -221,7 +222,7 @@ void create_message_entry(uint8_t f_port, uint8_t type, uint8_t* content, uint8_
     message->type = type;
     message->content_length = content_length;
     message->guaranteed_delivery = guaranteed_delivery;
-    message->remaining_retries = 0;
+    message->send_time = 0;
     message->dow = (timestamp >> 17) & 0x07;
     memcpy(&message->content[0], content, message->content_length);
 
@@ -392,7 +393,12 @@ bool transfer_data() {
     }
 
     while (message) {
-        if (message->remaining_retries-- <= 0) {
+        printf("get_us_since_boot: %" PRIu64 ", message->send_time: %" PRIu64 ", math: %" PRIu64 ", MESSAGE_TIMEOUT: %d\n",
+            get_us_since_boot() + MESSAGE_TIMEOUT,
+            message->send_time,
+            get_us_since_boot() + MESSAGE_TIMEOUT - message->send_time,
+            MESSAGE_TIMEOUT);
+        if ((get_us_since_boot() + MESSAGE_TIMEOUT - message->send_time) > MESSAGE_TIMEOUT) {
             if (message->f_port == 1) {
                 switch (message->type) {
                     case 1:
@@ -432,7 +438,7 @@ bool transfer_data() {
 
             printf("success!\n");
 
-            message->remaining_retries = REMAINING_RETRIES;
+            message->send_time = get_us_since_boot() + MESSAGE_TIMEOUT;
         }
 
         while (true) {
