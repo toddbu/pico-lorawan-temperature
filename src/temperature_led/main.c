@@ -393,6 +393,8 @@ bool transfer_data() {
     }
 
     while (message) {
+        bool message_sent = false;
+
         printf("get_us_since_boot: %" PRIu64 ", message->send_time: %" PRIu64 ", math: %" PRIu64 ", MESSAGE_TIMEOUT: %d\n",
             get_us_since_boot() + MESSAGE_TIMEOUT,
             message->send_time,
@@ -436,12 +438,14 @@ bool transfer_data() {
                 cleanup_message(message);
             }
 
+            message_sent = true;
+
             printf("success!\n");
 
             message->send_time = get_us_since_boot() + MESSAGE_TIMEOUT;
         }
 
-        while (true) {
+        while (message_sent) {
             // wait for up to 30 seconds for an event
             if (lorawan_process_timeout_ms(30000) == 0) {
                 // check if a downlink message was received
