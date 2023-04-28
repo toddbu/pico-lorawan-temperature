@@ -666,11 +666,23 @@ bool scheduled_daily_tasks( repeating_timer_t* time_sync_timer ) {
 }
 
 uint64_t debounce[40];
-void handle_gpio_irqs( uint gpio, uint32_t events ) {
-    uint8_t content = (events & GPIO_IRQ_EDGE_RISE ? 1 : 0);
+void __not_in_flash_func(handle_gpio_irqs)( uint gpio, uint32_t events ) {
+    // printf("gpio: %d, content: %d, debounce[gpio]: %" PRIu64 ", get_us_since_boot: %" PRIu64 ", test: %d\n",
+    //     gpio,
+    //     content,
+    //     debounce[gpio],
+    //     get_us_since_boot(),
+    //     get_us_since_boot() - 1000000 < debounce[gpio]);
+
     if (get_us_since_boot() - 1000000 < debounce[gpio]) {
         return;
     }
+
+    sleep_ms(500); // Give the pin time to settle into its new state
+    //$ uint8_t content = (events & GPIO_IRQ_EDGE_RISE ? 1 : 0);
+    uint8_t content = gpio_get(gpio);
+
+    printf("gpio: %d, content: %d\n", gpio, content);
 
     debounce[gpio] = get_us_since_boot();
 
