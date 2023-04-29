@@ -122,7 +122,7 @@ void internal_temperature_init();
 float internal_temperature_get();
 
 void machine_reset() {
-    watchdog_enable(1, 1);
+    watchdog_enable(1, 0);
     while (1);
 }
 
@@ -387,7 +387,7 @@ bool transfer_data() {
 
     struct message_entry* message = message_queue;
 
-    // Since we're a Class A device, if there are no uplinks then there are no downlinks either
+    // Since we're a Class A device, if we send no uplinks then we get no downlinks either
     if (message == NULL) {
         return true;
     }
@@ -446,8 +446,8 @@ bool transfer_data() {
         }
 
         while (message_sent) {
-            // wait for up to 30 seconds for an event
-            if (lorawan_process_timeout_ms(30000) == 0) {
+            // wait for up to 10 seconds for an event
+            if (lorawan_process_timeout_ms(10000) == 0) {
                 // check if a downlink message was received
                 receive_length = lorawan_receive(receive_buffer, sizeof(receive_buffer) / sizeof(receive_buffer[0]), &receive_port);
                 if (receive_length >= 0) {
