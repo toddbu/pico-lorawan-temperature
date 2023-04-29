@@ -80,11 +80,12 @@ const struct lorawan_otaa_settings otaa_settings = {
 // Message queue - 11 bytes of transmitted data total
 //
 // header format
-// +---------+-----------+-----------+----------------+
-// | version | timestamp |   type    | content_length |
-// +---------+-----------+-----------+----------------+
-// | 0-2 (3) | 3-22 (20) | 23-27 (5) |   28-31 (4)    |
-// +---------+-----------+-----------+----------------+
+// +---------+-----------+------------+-----------+----------------+
+// |         |           | guaranteed |           |                |
+// | version | timestamp |  delivery  |   type    | content_length |
+// +---------+-----------+------------+-----------+----------------+
+// | 0-2 (3) | 3-22 (20) |   23 (1)   | 24-27 (4) |   28-31 (4)    |
+// +---------+-----------+------------+-----------+----------------+
 //
 //   version - 0..7 (message version)
 //   timestamp - 0..0xFFFFF (see below)
@@ -107,12 +108,12 @@ struct message_entry {
   /* extra data that's not transmitted */
   uint8_t version;
   uint8_t f_port;
+  bool guaranteed_delivery;
   uint8_t type;
   uint8_t content_length;
-  struct message_entry* next;
-  bool guaranteed_delivery;
   uint64_t send_time;
   uint8_t dow;
+  struct message_entry* next;
 };
 struct message_entry* message_queue = NULL;
 static critical_section_t message_queue_cri_sec;
@@ -203,7 +204,7 @@ uint32_t create_message_timestamp() {
            current_time.sec;
 }
 
-void create_message_entry(uint8_t f_port, uint8_t type, uint8_t* content, uint8_t content_length, bool guaranteed_delivery) {
+void create_message_entry(uint8_t f_port, bool guaranteed_delivery, uint8_t type, uint8_t* content, uint8_t content_length) {
     uint32_t timestamp = create_message_timestamp();
 
     if (content_length > 7) {
@@ -214,14 +215,15 @@ void create_message_entry(uint8_t f_port, uint8_t type, uint8_t* content, uint8_
     message->header =
         ((MESSAGE_VERSION & 0x07) << 29) |
         ((timestamp & 0xFFFFF) << 9) |
-        ((type & 0x1F) << 4) |
+        (guaranteed_delivery ? 1 : 0) << 8 |
+        ((type & 0x0F) << 4) |
         (content_length & 0x0F);
 
     message->version = MESSAGE_VERSION;
     message->f_port = f_port;
+    message->guaranteed_delivery = guaranteed_delivery;
     message->type = type;
     message->content_length = content_length;
-    message->guaranteed_delivery = guaranteed_delivery;
     message->send_time = 0;
     message->dow = (timestamp >> 17) & 0x07;
     memcpy(&message->content[0], content, message->content_length);
@@ -235,14 +237,16 @@ void create_message_entry(uint8_t f_port, uint8_t type, uint8_t* content, uint8_
     printf("Free heap available: %d\n", getFreeHeap());
 }
 
-struct message_entry* match_message_by_header( uint8_t version, uint8_t receive_port, uint8_t type, uint32_t response_timestamp ) {
+struct message_entry* match_message_by_header( uint8_t version, uint8_t receive_port, bool guaranteed_delivery, uint8_t type, uint32_t response_timestamp ) {
     struct message_entry* current = message_queue;
 
     while (current != NULL) {
         uint32_t message_timestamp = (current->header >> 9) & 0xFFFFF;
 
         if ((receive_port == current->f_port) &&
-            (response_timestamp == message_timestamp)) {
+            (response_timestamp == message_timestamp) &&
+            (guaranteed_delivery == current->guaranteed_delivery) &&
+            (type == current->type)) {
             break;
         }
 
@@ -477,10 +481,11 @@ bool transfer_data() {
                         receive_buffer[0];
                     uint8_t receive_version = (receive_header >> 29) & 0x07;
                     uint32_t receive_timestamp = (receive_header >> 9) & 0xFFFFF;
-                    uint8_t receive_type = (receive_header >> 4) & 0x1F;
+                    bool receive_guaranteed_delivery = ((receive_header >> 8) & 0x01 ? true : false );
+                    uint8_t receive_type = (receive_header >> 4) & 0x0F;
                     printf("receive message timestamp = %d, dow = %d, time = %d\n", receive_timestamp, receive_timestamp >> 17, receive_timestamp & 0x1FFFF);
 
-                    cleanup_message(match_message_by_header(receive_version, receive_port, receive_type, receive_timestamp));
+                    cleanup_message(match_message_by_header(receive_version, receive_port, receive_guaranteed_delivery, receive_type, receive_timestamp));
 
                     uint32_t time_offset;
                     switch (receive_port) {
@@ -565,7 +570,7 @@ void sync_time( bool initialize ) {
         // First, send the message with our current time
         uint8_t time_sync[7];
         populate_time_sync(&time_sync[0]);
-        create_message_entry(222, 0, &time_sync[0], 4 + (sizeof(time_sync) / sizeof(time_sync[0])), !initialize);
+        create_message_entry(222, !initialize, 0, &time_sync[0], 4 + (sizeof(time_sync) / sizeof(time_sync[0])));
 
         // If we're initializing then we want to block the sync_time call until we can set
         // the time for the first time. Otherwise we just wait until the downlink response
@@ -582,7 +587,7 @@ void sync_time( bool initialize ) {
 
             // Go pick up the new timestamp
             populate_time_sync_nop(&time_sync[0]);
-            create_message_entry(222, 0, &time_sync[0], 4 + (sizeof(time_sync) / sizeof(time_sync[0])), false);
+            create_message_entry(222, false, 0, &time_sync[0], 4 + (sizeof(time_sync) / sizeof(time_sync[0])));
             if (!transfer_data()) {
                 join();
                 continue;
@@ -688,11 +693,11 @@ void __not_in_flash_func(handle_gpio_irqs)( uint gpio, uint32_t events ) {
 
     switch (gpio) {
         case 0:
-            create_message_entry(1, 2, &content, 1, true);
+            create_message_entry(1, true, 2, &content, 1);
             break;
 
         case 1:
-            create_message_entry(1, 3, &content, 1, true);
+            create_message_entry(1, true, 3, &content, 1);
             break;
     }
 }
@@ -725,7 +730,7 @@ void service_interrupts( void ) {
         uint8_t content_length = sizeof(adc_temperature_byte);
 
         printf("Writing temperature to message queue\n");
-        create_message_entry(1, 1, &adc_temperature_byte, content_length, true);
+        create_message_entry(1, false, 1, &adc_temperature_byte, content_length);
 
         // now sleep for five minutes
         sleep_ms(300000);
