@@ -38,6 +38,12 @@
 #define MESSAGE_VERSION 0
 #define MESSAGE_TIMEOUT_US 600000000
 #define TEMPERATURE_READING_TIMEOUT_SECONDS 1800
+// Debug levels
+//   0 - Off
+//   1 - Exceptions
+//   2 - New messages
+//   3 - Tracing
+#define DEBUG_LEVEL 3
 
 uint32_t getTotalHeap(void) {
    extern char __StackLimit, __bss_end__;
@@ -124,48 +130,71 @@ void internal_temperature_init();
 float internal_temperature_get();
 
 void machine_reset() {
+    if (DEBUG_LEVEL >= 1) {
+        printf("Panic: resetting Pico!");
+    }
     watchdog_enable(1, 0);
     while (1);
 }
 
 void erase_nvm( void ) {
-    printf("Erasing NVM ... ");
+    if (DEBUG_LEVEL >= 3) {
+        printf("Erasing NVM ... ");
+    }
     if (lorawan_erase_nvm() < 0) {
-        printf("failed to erase NVM!!!\n");
+        if (DEBUG_LEVEL >= 1) {
+            printf("failed to erase NVM!!!\n");
+        }
         return;
     }
 
-    printf("success erasing NVM!\n");
+    if (DEBUG_LEVEL >= 3) {
+        printf("success erasing NVM!\n");
+    }
 }
 
 void join( void ) {
     // initialize the LoRaWAN stack
-    printf("Initilizating LoRaWAN ... ");
+    if (DEBUG_LEVEL >= 3) {
+        printf("Initilizating LoRaWAN ... ");
+    }
     if (lorawan_init_otaa(&sx1276_settings, LORAWAN_REGION, &otaa_settings) < 0) {
-        printf("failed to initialize OTAA - retarting!!!\n");
+        if (DEBUG_LEVEL >= 1) {
+            printf("failed to initialize OTAA - retarting!!!\n");
+        }
         erase_nvm();
         machine_reset();
     }
 
-    printf("success!\n");
+    if (DEBUG_LEVEL >= 3) {
+        printf("success!\n");
+    }
 
     // Start the join process and wait
-    printf("Joining LoRaWAN network ...");
+    if (DEBUG_LEVEL >= 3) {
+        printf("Joining LoRaWAN network ...");
+    }
     lorawan_join();
 
     int seconds = 0;
     while (!lorawan_is_joined()) {
         lorawan_process_timeout_ms(1000);
-        printf(".");
+        if (DEBUG_LEVEL >= 3) {
+            printf(".");
+        }
         if (++seconds > 120) {
             // Give up and restart the Pico
-            printf("failed to join (timeout) - restarting!!!\n");
+            if (DEBUG_LEVEL >= 1) {
+                printf("failed to join (timeout) - restarting!!!\n");
+            }
             erase_nvm();
             machine_reset();
         }
     }
 
-    printf(" joined successfully!\n");
+    if (DEBUG_LEVEL >= 3) {
+        printf(" joined successfully!\n");
+    }
 }
 
 void cleanup_message( struct message_entry* message ) {
@@ -235,7 +264,9 @@ void create_message_entry(uint8_t f_port, bool guaranteed_delivery, uint8_t type
     message_queue = message;
     critical_section_exit(&message_queue_cri_sec);
 
-    printf("Free heap available: %d\n", getFreeHeap());
+    if (DEBUG_LEVEL >= 3) {
+        printf("Free heap available: %d\n", getFreeHeap());
+    }
 }
 
 struct message_entry* match_message_by_header( uint8_t version, uint8_t receive_port, bool guaranteed_delivery, uint8_t type, uint32_t response_timestamp ) {
@@ -281,11 +312,8 @@ int8_t getTimeComponentLimitMin(int component_number) {
 int8_t time_component_limits_max[5] = { 60, 60, 24, 31 /* Unused, see getTimeComponentLimitMax */, 12 };
 int8_t time_component_month_limits_max[12] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
 int8_t getTimeComponentLimitMax(int component_number, int8_t month, int16_t year) {
-    //$ printf("here0 %d\n", component_number);
     if (component_number == 3) {
-        //$ printf("here1 %d %d\n", component_number, 3);
         if (month == 2) {
-            //$ printf("here2 %d %d %d\n", component_number, 3, month);
             int time_component_limit_max = time_component_month_limits_max[month - 1];
             if (is_leap_year(year)) {
                 time_component_limit_max++;
@@ -311,7 +339,6 @@ int8_t calculate_dow(int8_t day, int8_t month, int16_t year) {
     year = year % 100;
     day_of_week += year + (year / 4);
     day_of_week = day_of_week % 7;
-    //$ printf("day = %d, m = %d, y = %d\n", day, month, year);
 
     return day_of_week;
 }
@@ -344,14 +371,11 @@ void sync_time_on_timestamp( uint8_t* receive_buffer) {
         int8_t time_component_limit_min = getTimeComponentLimitMin(i);
         int8_t time_component_limit_max = getTimeComponentLimitMax(i, current_time.month, current_time.year);
 
-        //$ printf("%d, min = %d, max = %d, mon = %d, year = %d, tc[i] = %d,\n", i, getTimeComponentLimitMin(i), getTimeComponentLimitMax(i, current_time.month, current_time.year), current_time.month, current_time.year, *time_components[i]);
         if (*time_components[i] < time_component_limit_min) {
             i < 4 ? (*time_components[i+1])-- : current_time.year--;
             *time_components[i] += time_component_limit_max;
         } else if (*time_components[i] >= (time_component_limit_max + time_component_limit_min)) {
-            //$ printf("< %d: *time_components[i+1] = %d\n", i, *time_components[i+1]);
             i < 4 ? (*time_components[i+1])++ : current_time.year++;
-            //$ printf("> %d: *time_components[i+1] = %d\n", i, *time_components[i+1]);
             *time_components[i] -= time_component_limit_max;
         }
     }
@@ -359,29 +383,33 @@ void sync_time_on_timestamp( uint8_t* receive_buffer) {
     // Calculate the day of week
     current_time.dotw = calculate_dow(current_time.day, current_time.month, current_time.year);
 
-    printf("Setting time to %02d-%02d-%02d %02d:%02d:%02d (%d)\n",
-        current_time.year,
-        current_time.month,
-        current_time.day,
-        current_time.hour,
-        current_time.min,
-        current_time.sec,
-        current_time.dotw
-    );
+    if (DEBUG_LEVEL >= 3) {
+        printf("Setting time to %02d-%02d-%02d %02d:%02d:%02d (%d)\n",
+            current_time.year,
+            current_time.month,
+            current_time.day,
+            current_time.hour,
+            current_time.min,
+            current_time.sec,
+            current_time.dotw
+        );
+    }
 
     rtc_set_datetime(&current_time);
     sleep_ms(1); // Let the RTC stabiize
 
     rtc_get_datetime(&current_time);
-    printf("Date updated to %02d-%02d-%02d %02d:%02d:%02d (%d)\n",
-        current_time.year,
-        current_time.month,
-        current_time.day,
-        current_time.hour,
-        current_time.min,
-        current_time.sec,
-        current_time.dotw
-    );
+    if (DEBUG_LEVEL >= 2) {
+        printf("Date updated to %02d-%02d-%02d %02d:%02d:%02d (%d)\n",
+            current_time.year,
+            current_time.month,
+            current_time.day,
+            current_time.hour,
+            current_time.min,
+            current_time.sec,
+            current_time.dotw
+        );
+    }
 }
 
 bool skip_first_received_messages = true;
@@ -400,37 +428,43 @@ bool transfer_data() {
     while (message) {
         bool message_sent = false;
 
-        printf("get_us_since_boot: %" PRIu64 ", message->send_time: %" PRIu64 ", math: %" PRIu64 ", MESSAGE_TIMEOUT_US: %d\n",
-            get_us_since_boot() + MESSAGE_TIMEOUT_US,
-            message->send_time,
-            get_us_since_boot() + MESSAGE_TIMEOUT_US - message->send_time,
-            MESSAGE_TIMEOUT_US);
+        if (DEBUG_LEVEL >= 3) {
+            printf("get_us_since_boot: %" PRIu64 ", message->send_time: %" PRIu64 ", math: %" PRIu64 ", MESSAGE_TIMEOUT_US: %d\n",
+                get_us_since_boot() + MESSAGE_TIMEOUT_US,
+                message->send_time,
+                get_us_since_boot() + MESSAGE_TIMEOUT_US - message->send_time,
+                MESSAGE_TIMEOUT_US);
+        }
         if ((get_us_since_boot() + MESSAGE_TIMEOUT_US - message->send_time) > MESSAGE_TIMEOUT_US) {
-            if (message->f_port == 1) {
-                switch (message->type) {
-                    case 1:
-                        printf("sending internal temperature: %d °C (0x%02x)... ", message->content[0], message->content[0]);
-                        break;
+            if (DEBUG_LEVEL >= 3) {
+                if (message->f_port == 1) {
+                    switch (message->type) {
+                        case 1:
+                            printf("sending internal temperature: %d °C (0x%02x)... ", message->content[0], message->content[0]);
+                            break;
 
-                    case 2:
-                        printf("sending top door status: %d... ", message->content[0]);
-                        break;
+                        case 2:
+                            printf("sending top door status: %d... ", message->content[0]);
+                            break;
 
-                    case 3:
-                        printf("sending bottom door status: %d... ", message->content[0]);
-                        break;
+                        case 3:
+                            printf("sending bottom door status: %d... ", message->content[0]);
+                            break;
 
-                    default:
-                        printf("Unknown messsage type on f_port 1: d...", message->type);
-                        break;
+                        default:
+                            printf("Unknown messsage type on f_port 1: d...", message->type);
+                            break;
+                    }
+                } else {
+                    printf("sending time sync message... ");
                 }
-            } else {
-                printf("sending time sync message... ");
             }
 
             // send the message as a series of unsigned bytes in an unconfirmed uplink message
             if (lorawan_send_unconfirmed(message, sizeof(uint32_t) /* header length */ + message->content_length, message->f_port) < 0) {
-                printf("failed!!!\n");
+                if (DEBUG_LEVEL >= 2) {
+                    printf("lorawan_send_unconfirmed failed!!!\n");
+                }
 
                 if (!message->guaranteed_delivery) {
                     cleanup_message(message);
@@ -445,7 +479,9 @@ bool transfer_data() {
 
             message_sent = true;
 
-            printf("success!\n");
+            if (DEBUG_LEVEL >= 3) {
+                printf("success!\n");
+            }
 
             message->send_time = get_us_since_boot() + MESSAGE_TIMEOUT_US;
         }
@@ -464,16 +500,20 @@ bool transfer_data() {
                     // app first starts up. If we do happen to discard something important then it should be
                     // retransmitted
                     if (skip_first_received_messages) {
-                        printf("Skipping buffered receive message from previous session\n");
+                        if (DEBUG_LEVEL >= 3) {
+                            printf("Skipping buffered receive message from previous session\n");
+                        }
                         continue;
                     }
 
-                    printf("received a %d byte message on port %d: ", receive_length, receive_port);
+                    if (DEBUG_LEVEL >= 3) {
+                        printf("received a %d byte message on port %d: ", receive_length, receive_port);
 
-                    for (int i = 0; i < receive_length; i++) {
-                        printf("%02x", receive_buffer[i]);
+                        for (int i = 0; i < receive_length; i++) {
+                            printf("%02x", receive_buffer[i]);
+                        }
+                        printf("\n");
                     }
-                    printf("\n");
 
                     uint32_t receive_header =
                         (receive_buffer[3] << 24) |
@@ -484,7 +524,9 @@ bool transfer_data() {
                     uint32_t receive_timestamp = (receive_header >> 9) & 0xFFFFF;
                     bool receive_guaranteed_delivery = ((receive_header >> 8) & 0x01 ? true : false );
                     uint8_t receive_type = (receive_header >> 4) & 0x0F;
-                    printf("receive message timestamp = %d, dow = %d, time = %d\n", receive_timestamp, receive_timestamp >> 17, receive_timestamp & 0x1FFFF);
+                    if (DEBUG_LEVEL >= 3) {
+                        printf("receive message timestamp = %d, dow = %d, time = %d\n", receive_timestamp, receive_timestamp >> 17, receive_timestamp & 0x1FFFF);
+                    }
 
                     cleanup_message(match_message_by_header(receive_version, receive_port, receive_guaranteed_delivery, receive_type, receive_timestamp));
 
@@ -497,7 +539,9 @@ bool transfer_data() {
                                     break;
 
                                 default:
-                                    printf("Unknown system message (port 222), type = %d", receive_type);
+                                    if (DEBUG_LEVEL >= 1) {
+                                        printf("Unknown system message (port 222), type = %d", receive_type);
+                                    }
                                     break;
                             }
                             break;
@@ -512,7 +556,9 @@ bool transfer_data() {
                             break;
 
                         default:
-                            printf("unknown message type ack: %d\n", receive_type);
+                            if (DEBUG_LEVEL >= 1) {
+                                printf("unknown message type ack: %d\n", receive_type);
+                            }
                             break;
                     }
                 }
@@ -616,16 +662,18 @@ void service_messages() {
     // loop forever
     while (1) {
         bool rtc_ready = rtc_get_datetime(&current_time);
-        printf("(%d) current time: %04d-%02d-%02d %02d:%02d:%02d, queued message count: %d\n",
-            rtc_ready,
-            current_time.year,
-            current_time.month,
-            current_time.day,
-            current_time.hour,
-            current_time.min,
-            current_time.sec,
-            queued_message_count()
-        );
+        if (DEBUG_LEVEL >= 3) {
+            printf("(%d) current time: %04d-%02d-%02d %02d:%02d:%02d, queued message count: %d\n",
+                rtc_ready,
+                current_time.year,
+                current_time.month,
+                current_time.day,
+                current_time.hour,
+                current_time.min,
+                current_time.sec,
+                queued_message_count()
+            );
+        }
         if (rejoin) {
             rejoin = false;
             join();
@@ -655,7 +703,9 @@ bool scheduled_daily_tasks( repeating_timer_t* time_sync_timer ) {
     // an ACK back on a message at the same time that we are about to delete it. The
     // probablility of this happening is extremely slim, however, so we'll just
     // let the watchdog deal with this case for now
-    printf("Cleaning up dead messages\n");
+    if (DEBUG_LEVEL >= 2) {
+        printf("Cleaning up dead messages\n");
+    }
     rtc_get_datetime(&current_time);
     expired_dow = (current_time.dotw + 2) % 7;
     while (current != NULL) {
@@ -667,19 +717,14 @@ bool scheduled_daily_tasks( repeating_timer_t* time_sync_timer ) {
     }
 
 
-    printf("Daily time sync\n");
+    if (DEBUG_LEVEL >= 2) {
+        printf("Daily time sync\n");
+    }
     sync_time(false);
 }
 
 uint64_t debounce[40];
 void __not_in_flash_func(handle_gpio_irqs)( uint gpio, uint32_t events ) {
-    // printf("gpio: %d, content: %d, debounce[gpio]: %" PRIu64 ", get_us_since_boot: %" PRIu64 ", test: %d\n",
-    //     gpio,
-    //     content,
-    //     debounce[gpio],
-    //     get_us_since_boot(),
-    //     get_us_since_boot() - 1000000 < debounce[gpio]);
-
     if (get_us_since_boot() - 1000000 < debounce[gpio]) {
         return;
     }
@@ -688,7 +733,9 @@ void __not_in_flash_func(handle_gpio_irqs)( uint gpio, uint32_t events ) {
     //$ uint8_t content = (events & GPIO_IRQ_EDGE_RISE ? 1 : 0);
     uint8_t content = gpio_get(gpio);
 
-    printf("gpio: %d, content: %d\n", gpio, content);
+    if (DEBUG_LEVEL >= 3) {
+        printf("gpio: %d, content: %d\n", gpio, content);
+    }
 
     debounce[gpio] = get_us_since_boot();
 
@@ -730,7 +777,9 @@ void service_interrupts( void ) {
         uint8_t adc_temperature_byte = internal_temperature_get();
         uint8_t content_length = sizeof(adc_temperature_byte);
 
-        printf("Writing temperature to message queue\n");
+        if (DEBUG_LEVEL >= 2) {
+            printf("Writing temperature to message queue\n");
+        }
         create_message_entry(1, false, 1, &adc_temperature_byte, content_length);
 
         // now sleep for TEMPERATURE_READING_TIMEOUT_SECONDS
@@ -746,7 +795,9 @@ int main( void )
     //$     tight_loop_contents();
     //$ }
 
-    printf("Pico LoRaWAN - OTAA - Temperature + LED\n\n");
+    if (DEBUG_LEVEL >= 3) {
+        printf("Pico LoRaWAN - OTAA - Temperature + LED\n\n");
+    }
 
     // If your device can't seem to connect then uncomment the line
     // below to remove any existing device info
@@ -769,7 +820,9 @@ int main( void )
     // Get the current date and time from the remote end
     sync_time( true );
 
-    printf("Hooking in service_interrupts\n");
+    if (DEBUG_LEVEL >= 3) {
+        printf("Hooking in service_interrupts\n");
+    }
     multicore_launch_core1(&service_interrupts);
 
     service_messages();
