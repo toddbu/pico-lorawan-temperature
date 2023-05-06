@@ -36,7 +36,8 @@
 #include "config.h"
 
 #define MESSAGE_VERSION 0
-#define MESSAGE_TIMEOUT 600000000
+#define MESSAGE_TIMEOUT_US 600000000
+#define TEMPERATURE_READING_TIMEOUT_SECONDS 1800
 
 uint32_t getTotalHeap(void) {
    extern char __StackLimit, __bss_end__;
@@ -399,12 +400,12 @@ bool transfer_data() {
     while (message) {
         bool message_sent = false;
 
-        printf("get_us_since_boot: %" PRIu64 ", message->send_time: %" PRIu64 ", math: %" PRIu64 ", MESSAGE_TIMEOUT: %d\n",
-            get_us_since_boot() + MESSAGE_TIMEOUT,
+        printf("get_us_since_boot: %" PRIu64 ", message->send_time: %" PRIu64 ", math: %" PRIu64 ", MESSAGE_TIMEOUT_US: %d\n",
+            get_us_since_boot() + MESSAGE_TIMEOUT_US,
             message->send_time,
-            get_us_since_boot() + MESSAGE_TIMEOUT - message->send_time,
-            MESSAGE_TIMEOUT);
-        if ((get_us_since_boot() + MESSAGE_TIMEOUT - message->send_time) > MESSAGE_TIMEOUT) {
+            get_us_since_boot() + MESSAGE_TIMEOUT_US - message->send_time,
+            MESSAGE_TIMEOUT_US);
+        if ((get_us_since_boot() + MESSAGE_TIMEOUT_US - message->send_time) > MESSAGE_TIMEOUT_US) {
             if (message->f_port == 1) {
                 switch (message->type) {
                     case 1:
@@ -446,7 +447,7 @@ bool transfer_data() {
 
             printf("success!\n");
 
-            message->send_time = get_us_since_boot() + MESSAGE_TIMEOUT;
+            message->send_time = get_us_since_boot() + MESSAGE_TIMEOUT_US;
         }
 
         while (message_sent) {
@@ -732,8 +733,8 @@ void service_interrupts( void ) {
         printf("Writing temperature to message queue\n");
         create_message_entry(1, false, 1, &adc_temperature_byte, content_length);
 
-        // now sleep for five minutes
-        sleep_ms(300000);
+        // now sleep for TEMPERATURE_READING_TIMEOUT_SECONDS
+        sleep_ms(TEMPERATURE_READING_TIMEOUT_SECONDS * 1000);
     }
 }
 
