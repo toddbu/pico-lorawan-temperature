@@ -37,7 +37,8 @@
 
 #define MESSAGE_VERSION 0
 #define MESSAGE_TIMEOUT_US 600000000
-#define TEMPERATURE_READING_TIMEOUT_SECONDS 1800
+#define DAILY_TASK_TIMEOUT_SECONDS 480
+#define TEMPERATURE_READING_TIMEOUT_SECONDS 180
 // Debug levels
 //   0 - Off
 //   1 - Exceptions
@@ -156,7 +157,7 @@ void erase_nvm( void ) {
 void join( void ) {
     // initialize the LoRaWAN stack
     if (DEBUG_LEVEL >= 3) {
-        printf("Initilizating LoRaWAN ... ");
+        printf("Initializating LoRaWAN ... ");
     }
     if (lorawan_init_otaa(&sx1276_settings, LORAWAN_REGION, &otaa_settings) < 0) {
         if (DEBUG_LEVEL >= 1) {
@@ -758,9 +759,8 @@ void service_interrupts( void ) {
         debounce[i] = 0;
     }
 
-    // Once per day, schedule a time sync
-    //$ add_repeating_timer_ms(86400000, scheduled_daily_tasks, NULL, &time_sync_timer);
-    add_repeating_timer_ms(3600000, scheduled_daily_tasks, NULL, &time_sync_timer);
+    // Schedule a time sync
+    add_repeating_timer_ms(DAILY_TASK_TIMEOUT_SECONDS * 1000, scheduled_daily_tasks, NULL, &time_sync_timer);
 
     // Enable our GPIO IRQs
     gpio_init(0);
