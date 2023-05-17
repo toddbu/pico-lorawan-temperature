@@ -626,7 +626,7 @@ void sync_time( bool initialize ) {
         // Oh well, we'll retry again soon as part of our regular time sync so no big deal
         if (initialize) {
             if (!transfer_data()) {
-                join();
+                //$ join();
                 continue;
             }
 
@@ -637,7 +637,7 @@ void sync_time( bool initialize ) {
             populate_time_sync_nop(&time_sync[0]);
             create_message_entry(222, false, 0, &time_sync[0], 4 + (sizeof(time_sync) / sizeof(time_sync[0])));
             if (!transfer_data()) {
-                join();
+                //$ join();
                 continue;
             }
 
@@ -675,16 +675,23 @@ void service_messages() {
                 queued_message_count()
             );
         }
+        //$
+        /*
         if (rejoin) {
             rejoin = false;
             join();
         }
+        */
 
-        rejoin = !transfer_data();
+        //$ rejoin = !transfer_data();
+        transfer_data();
 
+        //$
+        /*
         if (rejoin) {
             continue;
         }
+        */
 
         // now sleep for 10 seconds
         sleep_ms(10000);
@@ -814,7 +821,7 @@ int main( void )
     // uncomment next line to enable debug
     // lorawan_debug(true);
 
-    // Join the server
+    // Join the LoRaWAN network
     join();
 
     // Get the current date and time from the remote end
