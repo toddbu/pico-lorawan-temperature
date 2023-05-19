@@ -473,9 +473,9 @@ bool transfer_data() {
                     printf("lorawan_send_unconfirmed failed!!!\n");
                 }
 
-                if (!message->guaranteed_delivery) {
-                    cleanup_message(message);
-                }
+                //$ if (!message->guaranteed_delivery) {
+                //$     cleanup_message(message);
+                //$ }
 
                 failed_send_packet_count++;
                 return false;
