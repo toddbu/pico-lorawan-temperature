@@ -414,12 +414,18 @@ void sync_time_on_timestamp( uint8_t* receive_buffer) {
 }
 
 bool skip_first_received_messages = true;
+int failed_send_packet_count = 0;
 bool transfer_data() {
     int receive_length = 0;
     uint8_t receive_buffer[242];
     uint8_t receive_port = 0;
 
     struct message_entry* message = message_queue;
+
+    if (failed_send_packet_count > 5) {
+        printf("More than five failed lorawan_send_unconfirmed() calls in a row, resetting device");
+        machine_reset();
+    }
 
     // Since we're a Class A device, if we send no uplinks then we get no downlinks either
     if (message == NULL) {
@@ -471,6 +477,7 @@ bool transfer_data() {
                     cleanup_message(message);
                 }
 
+                failed_send_packet_count++;
                 return false;
             }
 
@@ -479,6 +486,7 @@ bool transfer_data() {
             }
 
             message_sent = true;
+            failed_send_packet_count = 0;
 
             if (DEBUG_LEVEL >= 3) {
                 printf("success!\n");
