@@ -424,6 +424,7 @@ bool transfer_data() {
 
     if (failed_send_packet_count > 5) {
         printf("More than five failed lorawan_send_unconfirmed() calls in a row, resetting device");
+        sleep_ms(5000); // give time for the printf to complete
         machine_reset();
     }
 
@@ -494,6 +495,8 @@ bool transfer_data() {
 
             message->send_time = get_us_since_boot() + MESSAGE_TIMEOUT_US;
         }
+
+        struct message_entry* next_message = message->next;
 
         while (message_sent) {
             // wait for up to 10 seconds for an event
@@ -580,7 +583,7 @@ bool transfer_data() {
             break;
         }
 
-        message = message->next;
+        message = next_message;
     }
 
     return true;
