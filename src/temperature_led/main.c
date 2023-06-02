@@ -469,14 +469,11 @@ bool transfer_data() {
             }
 
             // send the message as a series of unsigned bytes in an unconfirmed uplink message
+            printf("(%d, %d, %d) ", message->header, sizeof(uint32_t) /* header length */ + message->content_length, message->f_port);
             if (lorawan_send_unconfirmed(message, sizeof(uint32_t) /* header length */ + message->content_length, message->f_port) < 0) {
                 if (DEBUG_LEVEL >= 2) {
                     printf("lorawan_send_unconfirmed failed!!!\n");
                 }
-
-                //$ if (!message->guaranteed_delivery) {
-                //$     cleanup_message(message);
-                //$ }
 
                 failed_send_packet_count++;
                 return false;
@@ -500,6 +497,7 @@ bool transfer_data() {
 
         while (message_sent) {
             // wait for up to 10 seconds for an event
+            printf("Listening for 10 seconds for a downlink message\n");
             if (lorawan_process_timeout_ms(10000) == 0) {
                 // check if a downlink message was received
                 receive_length = lorawan_receive(receive_buffer, sizeof(receive_buffer) / sizeof(receive_buffer[0]), &receive_port);
@@ -576,6 +574,8 @@ bool transfer_data() {
                 }
 
                 continue;
+            } else if (DEBUG_LEVEL >= 3) {
+                printf("No downlink message received\n");
             }
 
             skip_first_received_messages = false;
