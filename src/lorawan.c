@@ -28,6 +28,7 @@
 #include <string.h>
 
 #include "pico/lorawan.h"
+#include "pico/time.h"
 
 #include "board.h"
 #include "rtc-board.h"
@@ -318,6 +319,7 @@ int lorawan_send_unconfirmed(const void* data, uint8_t data_len, uint8_t app_por
     appData.Port = app_port;
     appData.BufferSize = data_len;
     appData.Buffer = (uint8_t*)data;
+
 
     if (LmHandlerSend(&appData, LORAMAC_HANDLER_UNCONFIRMED_MSG) != LORAMAC_HANDLER_SUCCESS) {
         return -1;
