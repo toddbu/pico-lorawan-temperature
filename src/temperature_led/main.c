@@ -130,14 +130,6 @@ static critical_section_t message_queue_cri_sec;
 void internal_temperature_init();
 float internal_temperature_get();
 
-void machine_reset() {
-    if (DEBUG_LEVEL >= 1) {
-        printf("Panic: resetting Pico!");
-    }
-    watchdog_enable(1, 0);
-    while (1);
-}
-
 void erase_nvm( void ) {
     if (DEBUG_LEVEL >= 3) {
         printf("Erasing NVM ... ");
@@ -152,6 +144,16 @@ void erase_nvm( void ) {
     if (DEBUG_LEVEL >= 3) {
         printf("success erasing NVM!\n");
     }
+}
+
+void machine_reset() {
+    if (DEBUG_LEVEL >= 1) {
+        printf("Panic: resetting Pico!");
+    }
+    erase_nvm();
+    sleep_ms(5000); // Wait for all printfs to complete
+    watchdog_enable(1, 0);
+    while (1);
 }
 
 void join( void ) {
@@ -188,6 +190,7 @@ void join( void ) {
             if (DEBUG_LEVEL >= 1) {
                 printf("failed to join (timeout) - restarting!!!\n");
             }
+            sleep_ms(5000); // Wait for printf to complete
             erase_nvm();
             machine_reset();
         }
@@ -423,8 +426,10 @@ bool transfer_data() {
     struct message_entry* message = message_queue;
 
     if (failed_send_packet_count > 5) {
-        printf("More than five failed lorawan_send_unconfirmed() calls in a row, resetting device");
-        sleep_ms(5000); // give time for the printf to complete
+        if (DEBUG_LEVEL >= 1) {
+            printf("More than five failed lorawan_send_unconfirmed() calls in a row, resetting device");
+            sleep_ms(5000); // give time for the printf to complete
+        }
         machine_reset();
     }
 
@@ -469,7 +474,9 @@ bool transfer_data() {
             }
 
             // send the message as a series of unsigned bytes in an unconfirmed uplink message
-            printf("(%d, %d, %d) ", message->header, sizeof(uint32_t) /* header length */ + message->content_length, message->f_port);
+            if (DEBUG_LEVEL >= 3) {
+                printf("(%d, %d, %d) ", message->header, sizeof(uint32_t) /* header length */ + message->content_length, message->f_port);
+            }
             if (lorawan_send_unconfirmed(message, sizeof(uint32_t) /* header length */ + message->content_length, message->f_port) < 0) {
                 if (DEBUG_LEVEL >= 2) {
                     printf("lorawan_send_unconfirmed failed!!!\n");
@@ -497,7 +504,9 @@ bool transfer_data() {
 
         while (message_sent) {
             // wait for up to 10 seconds for an event
-            printf("Listening for 10 seconds for a downlink message\n");
+            if (DEBUG_LEVEL >= 3) {
+                printf("Listening for 10 seconds for a downlink message\n");
+            }
             if (lorawan_process_timeout_ms(10000) == 0) {
                 // check if a downlink message was received
                 receive_length = lorawan_receive(receive_buffer, sizeof(receive_buffer) / sizeof(receive_buffer[0]), &receive_port);
@@ -809,6 +818,8 @@ int main( void )
 {
     // initialize stdio and wait for USB CDC connect
     stdio_init_all();
+    //$ stdio_usb_init();
+    sleep_ms(5000);
     //$ while (!tud_cdc_connected()) {
     //$     tight_loop_contents();
     //$ }
