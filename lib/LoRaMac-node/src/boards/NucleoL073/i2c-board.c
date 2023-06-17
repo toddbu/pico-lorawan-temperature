@@ -73,6 +73,7 @@ void I2cMcuFormat( I2c_t *obj, I2cMode mode, I2cDutyCycle dutyCycle, bool I2cAck
     HAL_I2C_Init( &I2cHandle );
 
     HAL_I2CEx_ConfigAnalogFilter( &I2cHandle, I2C_ANALOGFILTER_ENABLE );
+    HAL_I2CEx_ConfigDigitalFilter( &I2cHandle, 0 );
 }
 
 void I2cMcuResetBus( I2c_t *obj )
@@ -106,27 +107,27 @@ void I2cSetAddrSize( I2c_t *obj, I2cAddrSize addrSize )
     I2cInternalAddrSize = addrSize;
 }
 
-uint8_t I2cMcuWriteBuffer( I2c_t *obj, uint8_t deviceAddr, uint8_t *buffer, uint16_t size )
+LmnStatus_t I2cMcuWriteBuffer( I2c_t *obj, uint8_t deviceAddr, uint8_t *buffer, uint16_t size )
 {
-    uint8_t status = FAIL;
+    LmnStatus_t status = LMN_STATUS_ERROR;
 
-    status = ( HAL_I2C_Master_Transmit( &I2cHandle, deviceAddr, buffer, size, 2000 ) == HAL_OK ) ? SUCCESS : FAIL;
+    status = ( HAL_I2C_Master_Transmit( &I2cHandle, deviceAddr, buffer, size, 2000 ) == HAL_OK ) ? LMN_STATUS_OK : LMN_STATUS_ERROR;
 
     return status;
 }
 
-uint8_t I2cMcuReadBuffer( I2c_t *obj, uint8_t deviceAddr, uint8_t *buffer, uint16_t size )
+LmnStatus_t I2cMcuReadBuffer( I2c_t *obj, uint8_t deviceAddr, uint8_t *buffer, uint16_t size )
 {
-    uint8_t status = FAIL;
+    LmnStatus_t status = LMN_STATUS_ERROR;
 
-    status = ( HAL_I2C_Master_Receive( &I2cHandle, deviceAddr, buffer, size, 2000 ) == HAL_OK ) ? SUCCESS : FAIL;
+    status = ( HAL_I2C_Master_Receive( &I2cHandle, deviceAddr, buffer, size, 2000 ) == HAL_OK ) ? LMN_STATUS_OK : LMN_STATUS_ERROR;
 
     return status;
 }
 
-uint8_t I2cMcuWriteMemBuffer( I2c_t *obj, uint8_t deviceAddr, uint16_t addr, uint8_t *buffer, uint16_t size )
+LmnStatus_t I2cMcuWriteMemBuffer( I2c_t *obj, uint8_t deviceAddr, uint16_t addr, uint8_t *buffer, uint16_t size )
 {
-    uint8_t status = FAIL;
+    LmnStatus_t status = LMN_STATUS_ERROR;
     uint16_t memAddSize = 0;
 
     if( I2cInternalAddrSize == I2C_ADDR_SIZE_8 )
@@ -137,14 +138,14 @@ uint8_t I2cMcuWriteMemBuffer( I2c_t *obj, uint8_t deviceAddr, uint16_t addr, uin
     {
         memAddSize = I2C_MEMADD_SIZE_16BIT;
     }
-    status = ( HAL_I2C_Mem_Write( &I2cHandle, deviceAddr, addr, memAddSize, buffer, size, 2000 ) == HAL_OK ) ? SUCCESS : FAIL;
+    status = ( HAL_I2C_Mem_Write( &I2cHandle, deviceAddr, addr, memAddSize, buffer, size, 2000 ) == HAL_OK ) ? LMN_STATUS_OK : LMN_STATUS_ERROR;
 
     return status;
 }
 
-uint8_t I2cMcuReadMemBuffer( I2c_t *obj, uint8_t deviceAddr, uint16_t addr, uint8_t *buffer, uint16_t size )
+LmnStatus_t I2cMcuReadMemBuffer( I2c_t *obj, uint8_t deviceAddr, uint16_t addr, uint8_t *buffer, uint16_t size )
 {
-    uint8_t status = FAIL;
+    LmnStatus_t status = LMN_STATUS_ERROR;
     uint16_t memAddSize = 0;
 
     if( I2cInternalAddrSize == I2C_ADDR_SIZE_8 )
@@ -155,16 +156,16 @@ uint8_t I2cMcuReadMemBuffer( I2c_t *obj, uint8_t deviceAddr, uint16_t addr, uint
     {
         memAddSize = I2C_MEMADD_SIZE_16BIT;
     }
-    status = ( HAL_I2C_Mem_Read( &I2cHandle, deviceAddr, addr, memAddSize, buffer, size, 2000 ) == HAL_OK ) ? SUCCESS : FAIL;
+    status = ( HAL_I2C_Mem_Read( &I2cHandle, deviceAddr, addr, memAddSize, buffer, size, 2000 ) == HAL_OK ) ? LMN_STATUS_OK : LMN_STATUS_ERROR;
 
     return status;
 }
 
-uint8_t I2cMcuWaitStandbyState( I2c_t *obj, uint8_t deviceAddr )
+LmnStatus_t I2cMcuWaitStandbyState( I2c_t *obj, uint8_t deviceAddr )
 {
-    uint8_t status = FAIL;
+    LmnStatus_t status = LMN_STATUS_ERROR;
 
-    status = ( HAL_I2C_IsDeviceReady( &I2cHandle, deviceAddr, 300, 4096 ) == HAL_OK ) ? SUCCESS : FAIL;
+    status = ( HAL_I2C_IsDeviceReady( &I2cHandle, deviceAddr, 300, 4096 ) == HAL_OK ) ? LMN_STATUS_OK : LMN_STATUS_ERROR;
 
     return status;
 }

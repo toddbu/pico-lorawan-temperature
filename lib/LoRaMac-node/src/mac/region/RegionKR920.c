@@ -41,11 +41,22 @@
  */
 #define KR920_LBT_RX_BANDWIDTH            200000
 
+/*!
+ * RSSI threshold for a free channel [dBm]
+ */
+#define KR920_RSSI_FREE_TH                          -65
+
+/*!
+ * Specifies the time the node performs a carrier sense
+ */
+#define KR920_CARRIER_SENSE_TIME                    6
+
 /*
  * Non-volatile module context.
  */
 static RegionNvmDataGroup1_t* RegionNvmGroup1;
 static RegionNvmDataGroup2_t* RegionNvmGroup2;
+static Band_t* RegionBands;
 
 // Static functions
 static int8_t GetMaxEIRP( uint32_t freq )
@@ -292,7 +303,7 @@ PhyParam_t RegionKR920GetPhyParam( GetPhyParams_t* getPhy )
 
 void RegionKR920SetBandTxDone( SetBandTxDoneParams_t* txDone )
 {
-    RegionCommonSetBandTxDone( &RegionNvmGroup1->Bands[RegionNvmGroup2->Channels[txDone->Channel].Band],
+    RegionCommonSetBandTxDone( &RegionBands[RegionNvmGroup2->Channels[txDone->Channel].Band],
                                txDone->LastTxAirTime, txDone->Joined, txDone->ElapsedTimeSinceStartUp );
 }
 
@@ -314,9 +325,10 @@ void RegionKR920InitDefaults( InitDefaultsParams_t* params )
 
             RegionNvmGroup1 = (RegionNvmDataGroup1_t*) params->NvmGroup1;
             RegionNvmGroup2 = (RegionNvmDataGroup2_t*) params->NvmGroup2;
+            RegionBands = (Band_t*) params->Bands;
 
             // Initialize bands
-            memcpy1( ( uint8_t* )RegionNvmGroup1->Bands, ( uint8_t* )bands, sizeof( Band_t ) * KR920_MAX_NB_BANDS );
+            memcpy1( ( uint8_t* )RegionBands, ( uint8_t* )bands, sizeof( Band_t ) * KR920_MAX_NB_BANDS );
 
             // Default channels
             RegionNvmGroup2->Channels[0] = ( ChannelParams_t ) KR920_LC1;
@@ -328,6 +340,9 @@ void RegionKR920InitDefaults( InitDefaultsParams_t* params )
 
             // Update the channels mask
             RegionCommonChanMaskCopy( RegionNvmGroup2->ChannelsMask, RegionNvmGroup2->ChannelsDefaultMask, CHANNELS_MASK_SIZE );
+
+            RegionNvmGroup2->RssiFreeThreshold = KR920_RSSI_FREE_TH;
+            RegionNvmGroup2->CarrierSenseTime = KR920_CARRIER_SENSE_TIME;
             break;
         }
         case INIT_TYPE_RESET_TO_DEFAULT_CHANNELS:
@@ -518,7 +533,7 @@ bool RegionKR920RxConfig( RxConfigParams_t* rxConfig, int8_t* datarate )
 bool RegionKR920TxConfig( TxConfigParams_t* txConfig, int8_t* txPower, TimerTime_t* txTimeOnAir )
 {
     int8_t phyDr = DataratesKR920[txConfig->Datarate];
-    int8_t txPowerLimited = RegionCommonLimitTxPower( txConfig->TxPower, RegionNvmGroup1->Bands[RegionNvmGroup2->Channels[txConfig->Channel].Band].TxMaxPower );
+    int8_t txPowerLimited = RegionCommonLimitTxPower( txConfig->TxPower, RegionBands[RegionNvmGroup2->Channels[txConfig->Channel].Band].TxMaxPower );
     uint32_t bandwidth = RegionCommonGetBandwidth( txConfig->Datarate, BandwidthsKR920 );
     float maxEIRP = GetMaxEIRP( RegionNvmGroup2->Channels[txConfig->Channel].Frequency );
     int8_t phyTxPower = 0;
@@ -737,6 +752,11 @@ int8_t RegionKR920DlChannelReq( DlChannelReqParams_t* dlChannelReq )
 {
     uint8_t status = 0x03;
 
+    if( dlChannelReq->ChannelId >= ( CHANNELS_MASK_SIZE * 16 ) )
+    {
+        return 0;
+    }
+
     // Verify if the frequency is supported
     if( VerifyRfFreq( dlChannelReq->Rx1Frequency ) == false )
     {
@@ -784,7 +804,7 @@ LoRaMacStatus_t RegionKR920NextChannel( NextChanParams_t* nextChanParams, uint8_
     countChannelsParams.Datarate = nextChanParams->Datarate;
     countChannelsParams.ChannelsMask = RegionNvmGroup2->ChannelsMask;
     countChannelsParams.Channels = RegionNvmGroup2->Channels;
-    countChannelsParams.Bands = RegionNvmGroup1->Bands;
+    countChannelsParams.Bands = RegionBands;
     countChannelsParams.MaxNbChannels = KR920_MAX_NB_CHANNELS;
     countChannelsParams.JoinChannels = &joinChannels;
 
@@ -811,7 +831,7 @@ LoRaMacStatus_t RegionKR920NextChannel( NextChanParams_t* nextChanParams, uint8_
 
             // Perform carrier sense for KR920_CARRIER_SENSE_TIME
             // If the channel is free, we can stop the LBT mechanism
-            if( Radio.IsChannelFree( RegionNvmGroup2->Channels[channelNext].Frequency, KR920_LBT_RX_BANDWIDTH, KR920_RSSI_FREE_TH, KR920_CARRIER_SENSE_TIME ) == true )
+            if( Radio.IsChannelFree( RegionNvmGroup2->Channels[channelNext].Frequency, KR920_LBT_RX_BANDWIDTH, RegionNvmGroup2->RssiFreeThreshold, RegionNvmGroup2->CarrierSenseTime ) == true )
             {
                 // Free channel found
                 *channel = channelNext;

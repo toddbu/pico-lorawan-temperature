@@ -11,8 +11,166 @@ Please refer to [Releases pre-certification-results](https://github.com/Lora-net
 
 ## [Unreleased]
 
-## [4.5.1] - 2021-01-18
+## [4.7.0] - 2022-12-09
 
+### General
+
+- Release based on "LoRaWAN specification 1.0.4" and "LoRaWAN specification 1.1.0 + FCntDwn ERRATA" with "LoRaWAN Regional Parameters 2-1.0.3"
+- GitHub reported issues corrections.
+
+### Known limitations
+
+- SAMR34 platform does not implement NVM storage functionality. This is a requirement for LoRaWAN versions greater or equal to 1.0.4.
+  No work on this subject is forseen by the maintainers. Implementation proposals are welcome.
+
+### Added
+
+- Trigger NVM update on `MacGroup2.DutyCycleOn` change
+- Configure radio sync word upon state restoration from NVM
+- Added missing return status initialization for Class A
+- Added a check for `GroupId` in order to avoid out of bounds access
+- Make LBT RSSI free channel threshold and carrier sense time (CST) parameters configurable
+- Signal NVM data change in `LoRaMacMc*` functions
+- Teach `LoRaMacIsBusy` return false if the MAC is stopped
+- Added support for new release of ARIB STD-T108 Ver1.4 under AS923 region
+- Support LoRaWAN 1.1 with ATECC608A/B secure element
+- Added a function to reset the stack internal state machine
+- Added an option for MAC commands to verify against an explicit confirmation
+- Added a check to verify that `SystemMaxRxError` provided value is in the range 0..500 ms
+
+### Changed
+
+- Updated regions implementation to regional parameters RP2-1.0.3
+- Move AdrAckLimit and AdrAckDelay to NVM `MacGroup2`
+- Refactored and improved the way the duty-cycle is managed
+
+### Fixed
+
+- Fixed class B multicast handling in `LoRaMacClassBProcessMulticastSlot()`
+- Restore `RegionGroup2` in `RestoreNvmData`
+- Fix a duty cycle related deadlock in `ScheduleTx`
+- Fixed where `LastDownFCnt` update takes place for LoRaWAN 1.1.x
+- Fixes for class C activation and deactivation
+- Don't `memset` the TX/RX buffer when radio is set to receive mode
+- Fixed usage of wrong API for general purpose keys
+- Fixed and refactored JoinReq, `ReJoinType0Req`, `ReJoinType1Req`, `ReJoinType2Req` handling
+- Fixed Rx windows timer handling
+- Fixed FUOTA fragmentation implementation
+- Fixed time credits check as proposed
+- Fixed potential buffer overflow in `ProcessRadioRxDone` - [Security](###security)
+- Applied the proposed fix for the CRC check of empty `struct`
+- Fixed inconsistent handling of undefined callbacks
+- Fixed `HardFault_Handler` for Cortex-M0 targets
+- Fixed ABP join handling to be similar to OTAA join handling
+- Fixed issue with RX2 data rate in case of 0x0F for `RxParamSetupReq` and `JoinAccept`
+
+### Removed
+
+- Removed useless `FOptsLen` filed check
+- Removed unused `ACTIVE_REGION` pre-processing check
+
+### Security
+
+- Security breach found by Simon Wörner(@SWW13) please refer to security advisory - [security advisory - CVE-2022-39274](https://github.com/Lora-net/LoRaMac-node/security/advisories/GHSA-7vv8-73pc-63c2)
+
+## [4.6.0] - 2022-01-11
+
+### General
+
+- Release based on "LoRaWAN specification 1.0.4" and "LoRaWAN specification 1.1.0 + FCntDwn ERRATA" with "LoRaWAN Regional Parameters 2-1.0.1"
+- GitHub reported issues corrections.
+
+### Known limitations
+
+- SAMR34 platform does not implement NVM storage functionality. This is a requirement for LoRaWAN versions greater or equal to 1.0.4.
+  No work on this subject is forseen by the maintainers. Implementation proposals are welcome.
+
+### Added
+
+- Added NbTrans default value reset under JoinAccept processing
+- Added missing Class B certification commands
+- Added missing `classBParams.NetworkActivation` variable initialization
+- Added Class B remote multicast setup support
+- Added data rate validation to the join accept message handling
+- Added channel id limits verification to DlChannelReq handling
+
+### Changed
+
+- Changed `LmHandlerDeviceTimeReq` API to be publicly accessible
+- Changed improved the way `USE_LRWAN_1_1_X_CRYPTO` pre-processing directive is used
+- Changed improved the way `JoinNonce` is checked
+
+### Fixed
+
+- Fixed first beacon acquisition after receiving a `DeviceTimeAns`.
+- Fixed `LmHandlerParams_t` `PingSlotPeriodicity` field type from `bool` to `uint8_t`
+- Fixed i2c.h to include "utilities.h".
+- Fixed VSCode `periodic-uplink-lpp` project default LoRaWAN class selection
+- Fixed SX127x FSK transmission when radio current operating mode is RX.
+
+### Removed
+
+- Removed no more needed `MLME_SCHEDULE_UPLINK` notification
+
+## [4.5.2] - 2021-05-28
+
+### General
+
+- Release based on "LoRaWAN specification 1.0.4" and "LoRaWAN Regional Parameters 2-1.0.1"
+- GitHub reported issues corrections.
+
+### Known limitations
+
+- SAMR34 platform does not implement NVM storage functionality. This is a requirement for LoRaWAN versions greater or equal to 1.0.4.
+  No work on this subject is forseen by the maintainers. Implementation proposals are welcome.
+
+### Added
+
+- Added possibility to override periodic-uplink-lpp example `LORAWAN_DEFAULT_CLASS`
+- Added I2C driver support for B-L072Z-LRWAN1 and Nucleo platforms to the build system
+- Added battery voltage and MCU temperature reading functions implementation for Nucleo platforms
+- Added a default value for `Request->ReqReturn.DutyCycleWaitTime` to ensure that a valid value is always returned
+- Added SX126x `REG_RX_GAIN` and `REG_TX_MODULATION` to the radio registers retention list
+- Added SX126x missing registers definitions
+- Added radio image calibration enforcement after radio initialization and radio sleep cold start.
+- Added possibility to query minimal Tx data rate
+
+### Changed
+
+- Updated ADC driver based on en.en-st-stm32cubeide examples
+- Changed improved the way `LmHandler` handles the packages transmissions
+- Changed certification `OnTxPeriodicityChanged` callback implementation in order to directly apply the requested change
+- Changed the `LmHandler` initialization to apply user default data rate
+- Changed SX1272 and SX1276 FSK FIFO threshold from 15 to 31 in order to give more time for the MCU to make other processing tasks
+- Changed the way `IrqFired` global variable is handled by `RadioIrqProcess`
+- Changed the place of call to `TimerStop( &RxTimeoutTimer )` on `RadioIrqProcess` implementation
+- Changed utilities.h `SUCCESS`/`FAIL` definition by an enumeration `LMN_STATUS_OK`/`LMN_STATUS_ERROR`
+
+### Fixed
+
+- Fixed Null pointer exception when CN470 region was selected
+- Fixed `src/system/gps.c` HasFix variable type from `double` to `bool`
+- Fixed Class C downlink handling
+- Fixed I2C driver for L476
+- Fixed re-transmissions handling when ClassB or ClassC downlink is received
+- Fixed certification `FPort224DisableReq` command NVM handling
+- Fixed Class B & C confirmed downlink acknowledge management when `CLASS_B_C_RESP_TIMEOUT` expires
+- Fixed an issue when receiving downlinks in class C window during a class A procedure
+- Fixed SX126x and LR1110 driver IrqFired variable management
+- Fixed `LmhpCompliance.c` `periodicity` array size computation
+- Fixed join back-off by not storing band usage on the NVM memory.
+- Fixed `LoRaMacMibGetRequestConfirm` `MIB_SE_PIN` handling
+- Fixed ping-slot frequency to take in account the `AS923_FREQ_OFFSET_HZ` parameter
+- Fixed fragmentation loop variable type in order to allow more than 255 fragments
+- Fixed `RtcMs2Tick` conversion on SAMR34
+- Fixed compiling issue when RU864 region is selected
+- Fixed `MLME_SCHEDULE_UPLINK` handling.
+
+### Removed
+
+- Removed STM32 platforms system wake up time calibration
+
+## [4.5.1] - 2021-01-18
 
 ### General
 
@@ -38,7 +196,6 @@ Please refer to [Releases pre-certification-results](https://github.com/Lora-net
 
 - Fixed compiling issues when KR920 or RU864 regions are selected
 - Fixed compiling issues for `fuota-test-01` example
-
 
 ## [4.5.0] - 2020-12-18
 
@@ -350,7 +507,6 @@ Please refer to [Releases pre-certification-results](https://github.com/Lora-net
 
 - Fixed an overflow issue that could happen with `NmeaStringSize` variable
 - Fixed an issue where the node stopped transmitting
-
 
 ## [4.3.1] - 2017-02-27
 

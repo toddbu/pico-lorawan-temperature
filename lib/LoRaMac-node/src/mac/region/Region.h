@@ -72,9 +72,9 @@ extern "C"
 #ifndef REGION_VERSION
 /*!
  * Regional parameters version definition.
- * RP002-1.0.1
+ * RP002-1.0.3
  */
-#define REGION_VERSION                              0x02010001
+#define REGION_VERSION                              0x02010003
 #endif
 
 
@@ -480,6 +480,10 @@ typedef struct sInitDefaultsParams
      * Pointer to region NVM group2.
      */
     void* NvmGroup2;
+    /*!
+     * Pointer to common region band storage.
+     */
+    void* Bands;
     /*!
      * Sets the initialization type.
      */

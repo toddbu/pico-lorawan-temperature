@@ -48,7 +48,9 @@
 /*!
  * LoRaWAN default end-device class
  */
+#ifndef LORAWAN_DEFAULT_CLASS
 #define LORAWAN_DEFAULT_CLASS                       CLASS_A
+#endif
 
 /*!
  * Defines the application data transmission duty cycle. 5s, value in [ms].
@@ -523,6 +525,11 @@ static void OnTxPeriodicityChanged( uint32_t periodicity )
     { // Revert to application default periodicity
         TxPeriodicity = APP_TX_DUTYCYCLE + randr( -APP_TX_DUTYCYCLE_RND, APP_TX_DUTYCYCLE_RND );
     }
+
+    // Update timer periodicity
+    TimerStop( &TxTimer );
+    TimerSetValue( &TxTimer, TxPeriodicity );
+    TimerStart( &TxTimer );
 }
 
 static void OnTxFrameCtrlChanged( LmHandlerMsgTypes_t isTxConfirmed )
