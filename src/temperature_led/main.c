@@ -689,7 +689,7 @@ void sync_time( bool initialize ) {
 
 void service_messages() {
     datetime_t current_time;
-    int last_temperature_send_time = get_us_since_boot() - TEMPERATURE_READING_TIMEOUT_US;
+    uint64_t last_temperature_send_time = get_us_since_boot() - TEMPERATURE_READING_TIMEOUT_US;
 
     bool rejoin = false;
     // loop forever
@@ -712,7 +712,7 @@ void service_messages() {
 
         // now sleep for 10 seconds
         if (DEBUG_LEVEL >= 3) {
-            printf("Sleeping for 10 seconds");
+            printf("Sleeping for 10 seconds...");
         }
         for (int i = 0; i < 10; i++) {
             if (get_us_since_boot() - last_temperature_send_time >= TEMPERATURE_READING_TIMEOUT_US) {
@@ -721,11 +721,12 @@ void service_messages() {
                 uint8_t content_length = sizeof(adc_temperature_byte);
 
                 if (DEBUG_LEVEL >= 2) {
-                    printf("Writing temperature to message queue\n");
+                    printf("\nWriting temperature to message queue\n");
                 }
                 create_message_entry(1, false, 1, &adc_temperature_byte, content_length);
 
                 last_temperature_send_time += TEMPERATURE_READING_TIMEOUT_US;
+                //$ last_temperature_send_time += get_us_since_boot();
             }
 
             if (DEBUG_LEVEL >= 3) {
@@ -805,17 +806,18 @@ void __not_in_flash_func(handle_gpio_irqs)( uint gpio, uint32_t events ) {
     }
 }
 
-void service_interrupts( void ) {
+void setup_interrupts( void ) {
     /*
     static struct repeating_timer time_sync_timer;
+
+    // Schedule a time sync
+    add_repeating_timer_ms(DAILY_TASK_TIMEOUT_US / 1000, scheduled_daily_tasks, NULL, &time_sync_timer);
+    */
 
     // Initialize our debounce array
     for (int i = 0; i < 40; i++) {
         debounce[i] = 0;
     }
-
-    // Schedule a time sync
-    add_repeating_timer_ms(DAILY_TASK_TIMEOUT_US / 1000, scheduled_daily_tasks, NULL, &time_sync_timer);
 
     // Enable our GPIO IRQs
     gpio_init(0);
@@ -826,21 +828,6 @@ void service_interrupts( void ) {
     gpio_set_dir(1, GPIO_IN);
     gpio_pull_up(1);
     gpio_set_irq_enabled(1, GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, true);
-
-    while (true) {
-        // get the internal temperature
-        uint8_t adc_temperature_byte = internal_temperature_get();
-        uint8_t content_length = sizeof(adc_temperature_byte);
-
-        if (DEBUG_LEVEL >= 2) {
-            printf("Writing temperature to message queue\n");
-        }
-        create_message_entry(1, false, 1, &adc_temperature_byte, content_length);
-
-        // now sleep for TEMPERATURE_READING_TIMEOUT_US
-        sleep_ms(TEMPERATURE_READING_TIMEOUT_US / 1000);
-    }
-    */
 }
 
 int main( void )
@@ -884,7 +871,8 @@ int main( void )
     }
     multicore_launch_core1(&service_interrupts);
     */
-    printf("Ignoring service_interrupts\n");
+    // printf("Running setup_interrupts\n");
+    // setup_interrupts();
 
     service_messages();
 
