@@ -36,9 +36,11 @@
 #include "config.h"
 
 #define MESSAGE_VERSION 0
+#define BOOT_TIME_OFFSET_US 86400000000 // This must be >= the max of MESSAGE_TIMEOUT_US,
+                                        // TEMPERATURE_READING_TIMEOUT_US, and DAILY_TASK_TIMEOUT_US
 #define MESSAGE_TIMEOUT_US 600000000
-#define DAILY_TASK_TIMEOUT_SECONDS 480
-#define TEMPERATURE_READING_TIMEOUT_SECONDS 180
+#define DAILY_TASK_TIMEOUT_US 480000000
+#define TEMPERATURE_READING_TIMEOUT_US 180000000
 // Debug levels
 //   0 - Off
 //   1 - Exceptions
@@ -59,7 +61,9 @@ uint32_t getFreeHeap(void) {
 }
 
 uint64_t get_us_since_boot() {
-    return to_us_since_boot(get_absolute_time());
+    // Adding BOOT_TIME_OFFSET_US helps with comparisons when
+    // using unsigned numbers
+    return to_us_since_boot(get_absolute_time() + BOOT_TIME_OFFSET_US);
 }
 
 // pin configuration for SX1276 radio module
@@ -150,7 +154,6 @@ void machine_reset() {
     if (DEBUG_LEVEL >= 1) {
         printf("Panic: resetting Pico!");
     }
-    erase_nvm();
     sleep_ms(5000); // Wait for all printfs to complete
     watchdog_enable(1, 0);
     while (1);
@@ -172,6 +175,14 @@ void join( void ) {
     if (DEBUG_LEVEL >= 3) {
         printf("success!\n");
     }
+
+    // if (lorawan_is_joined()) {
+    //     if (DEBUG_LEVEL >= 3) {
+    //         printf("LoRaWAN has already been joined, skipping lorawan_join()!\n");
+    //     }
+
+    //     return;
+    // }
 
     // Start the join process and wait
     if (DEBUG_LEVEL >= 3) {
@@ -443,12 +454,12 @@ bool transfer_data() {
 
         if (DEBUG_LEVEL >= 3) {
             printf("get_us_since_boot: %" PRIu64 ", message->send_time: %" PRIu64 ", math: %" PRIu64 ", MESSAGE_TIMEOUT_US: %d\n",
-                get_us_since_boot() + MESSAGE_TIMEOUT_US,
+                get_us_since_boot(),
                 message->send_time,
-                get_us_since_boot() + MESSAGE_TIMEOUT_US - message->send_time,
+                get_us_since_boot() - message->send_time,
                 MESSAGE_TIMEOUT_US);
         }
-        if ((get_us_since_boot() + MESSAGE_TIMEOUT_US - message->send_time) > MESSAGE_TIMEOUT_US) {
+        if ((get_us_since_boot() - message->send_time) > MESSAGE_TIMEOUT_US) {
             if (DEBUG_LEVEL >= 3) {
                 if (message->f_port == 1) {
                     switch (message->type) {
@@ -497,7 +508,7 @@ bool transfer_data() {
                 printf("success!\n");
             }
 
-            message->send_time = get_us_since_boot() + MESSAGE_TIMEOUT_US;
+            message->send_time = get_us_since_boot();
         }
 
         struct message_entry* next_message = message->next;
@@ -678,6 +689,7 @@ void sync_time( bool initialize ) {
 
 void service_messages() {
     datetime_t current_time;
+    int last_temperature_send_time = get_us_since_boot() - TEMPERATURE_READING_TIMEOUT_US;
 
     bool rejoin = false;
     // loop forever
@@ -695,30 +707,43 @@ void service_messages() {
                 queued_message_count()
             );
         }
-        //$
-        /*
-        if (rejoin) {
-            rejoin = false;
-            join();
-        }
-        */
 
-        //$ rejoin = !transfer_data();
         transfer_data();
 
-        //$
-        /*
-        if (rejoin) {
-            continue;
-        }
-        */
-
         // now sleep for 10 seconds
-        sleep_ms(10000);
+        if (DEBUG_LEVEL >= 3) {
+            printf("Sleeping for 10 seconds");
+        }
+        for (int i = 0; i < 10; i++) {
+            if (get_us_since_boot() - last_temperature_send_time >= TEMPERATURE_READING_TIMEOUT_US) {
+                // get the internal temperature
+                uint8_t adc_temperature_byte = internal_temperature_get();
+                uint8_t content_length = sizeof(adc_temperature_byte);
+
+                if (DEBUG_LEVEL >= 2) {
+                    printf("Writing temperature to message queue\n");
+                }
+                create_message_entry(1, false, 1, &adc_temperature_byte, content_length);
+
+                last_temperature_send_time += TEMPERATURE_READING_TIMEOUT_US;
+            }
+
+            if (DEBUG_LEVEL >= 3) {
+                printf(".");
+            }
+            sleep_ms(1000);
+        }
+
+        if (DEBUG_LEVEL >= 3) {
+            printf("\n");
+        }
     }
 }
 
 bool scheduled_daily_tasks( repeating_timer_t* time_sync_timer ) {
+    //$ printf("skipping scheduled_daily_tasks");
+    return true;
+
     datetime_t current_time;
     uint8_t expired_dow;
     struct message_entry* current = message_queue;
@@ -749,6 +774,8 @@ bool scheduled_daily_tasks( repeating_timer_t* time_sync_timer ) {
         printf("Daily time sync\n");
     }
     sync_time(false);
+
+    return true;
 }
 
 uint64_t debounce[40];
@@ -779,6 +806,7 @@ void __not_in_flash_func(handle_gpio_irqs)( uint gpio, uint32_t events ) {
 }
 
 void service_interrupts( void ) {
+    /*
     static struct repeating_timer time_sync_timer;
 
     // Initialize our debounce array
@@ -787,7 +815,7 @@ void service_interrupts( void ) {
     }
 
     // Schedule a time sync
-    add_repeating_timer_ms(DAILY_TASK_TIMEOUT_SECONDS * 1000, scheduled_daily_tasks, NULL, &time_sync_timer);
+    add_repeating_timer_ms(DAILY_TASK_TIMEOUT_US / 1000, scheduled_daily_tasks, NULL, &time_sync_timer);
 
     // Enable our GPIO IRQs
     gpio_init(0);
@@ -809,9 +837,10 @@ void service_interrupts( void ) {
         }
         create_message_entry(1, false, 1, &adc_temperature_byte, content_length);
 
-        // now sleep for TEMPERATURE_READING_TIMEOUT_SECONDS
-        sleep_ms(TEMPERATURE_READING_TIMEOUT_SECONDS * 1000);
+        // now sleep for TEMPERATURE_READING_TIMEOUT_US
+        sleep_ms(TEMPERATURE_READING_TIMEOUT_US / 1000);
     }
+    */
 }
 
 int main( void )
@@ -849,10 +878,13 @@ int main( void )
     // Get the current date and time from the remote end
     sync_time( true );
 
+    /*
     if (DEBUG_LEVEL >= 3) {
-        printf("Hooking in service_interrupts\n");
+        printf("Hooking in service_interrupts - kind of\n");
     }
     multicore_launch_core1(&service_interrupts);
+    */
+    printf("Ignoring service_interrupts\n");
 
     service_messages();
 
