@@ -35,6 +35,7 @@
 // edit with LoRaWAN Node Region and OTAA settings 
 #include "config.h"
 
+#define MESSAGE_QUEUE_SIZE 100
 #define MESSAGE_VERSION 0
 #define BOOT_TIME_OFFSET_US 86400000000 // This must be >= the max of MESSAGE_TIMEOUT_US,
                                         // TEMPERATURE_READING_TIMEOUT_US, and DAILY_TASK_TIMEOUT_US
@@ -128,7 +129,9 @@ struct message_entry {
   struct message_entry* next;
 };
 struct message_entry* message_queue = NULL;
+struct message_entry* free_queue = NULL;
 static critical_section_t message_queue_cri_sec;
+static critical_section_t free_queue_cri_sec;
 
 // functions used in main
 void internal_temperature_init();
@@ -212,13 +215,25 @@ void join( void ) {
     }
 }
 
+int get_free_entry_count() {
+    int count = 0;
+    struct message_entry* current = free_queue;
+
+    while (current != NULL) {
+        count++;
+        current = current->next;
+    }
+
+    return count;
+}
+
 void cleanup_message( struct message_entry* message ) {
     if (message == NULL) {
         return;
     }
 
     critical_section_enter_blocking(&message_queue_cri_sec);
-    if (message_queue == message) {
+    if (message == message_queue) {
         message_queue = message->next;
     } else {
         struct message_entry* previous = message_queue;
@@ -232,10 +247,21 @@ void cleanup_message( struct message_entry* message ) {
             previous = current;
             current = current->next;
         }
+
+        if (current == NULL) {
+            printf("Failed to remove message from message list- port = %d!!!", message->f_port);
+        }
     }
     critical_section_exit(&message_queue_cri_sec);
 
-    free(message);
+    critical_section_enter_blocking(&free_queue_cri_sec);
+    message->next = free_queue;
+    free_queue = message;
+    critical_section_exit(&free_queue_cri_sec);
+
+    if (DEBUG_LEVEL >= 3) {
+        printf("Free message entries available: %d\n", get_free_entry_count());
+    }
 }
 
 uint32_t create_message_timestamp() {
@@ -256,7 +282,20 @@ void create_message_entry(uint8_t f_port, bool guaranteed_delivery, uint8_t type
         content_length = 7;
     }
 
-    struct message_entry* message = (struct message_entry*) malloc(sizeof(struct message_entry));
+    if (!free_queue) {
+        printf("Free queue exhausted\n");
+        machine_reset();
+    }
+
+    if (DEBUG_LEVEL >= 3) {
+        printf("Creating new message on port %d with length = %d\n", f_port, content_length);
+    }
+
+    critical_section_enter_blocking(&free_queue_cri_sec);
+    struct message_entry* message = free_queue;
+    free_queue = free_queue->next;
+    critical_section_exit(&free_queue_cri_sec);
+
     message->header =
         ((MESSAGE_VERSION & 0x07) << 29) |
         ((timestamp & 0xFFFFF) << 9) |
@@ -280,7 +319,7 @@ void create_message_entry(uint8_t f_port, bool guaranteed_delivery, uint8_t type
     critical_section_exit(&message_queue_cri_sec);
 
     if (DEBUG_LEVEL >= 3) {
-        printf("Free heap available: %d\n", getFreeHeap());
+        printf("Free message entries available: %d\n", get_free_entry_count());
     }
 }
 
@@ -451,6 +490,7 @@ bool transfer_data() {
 
     while (message) {
         bool message_sent = false;
+        struct message_entry* next_message = message->next;
 
         if (DEBUG_LEVEL >= 3) {
             printf("get_us_since_boot: %" PRIu64 ", message->send_time: %" PRIu64 ", math: %" PRIu64 ", MESSAGE_TIMEOUT_US: %d\n",
@@ -488,13 +528,22 @@ bool transfer_data() {
             if (DEBUG_LEVEL >= 3) {
                 printf("(%d, %d, %d) ", message->header, sizeof(uint32_t) /* header length */ + message->content_length, message->f_port);
             }
-            if (lorawan_send_unconfirmed(message, sizeof(uint32_t) /* header length */ + message->content_length, message->f_port) < 0) {
+
+            int send_result = lorawan_send_unconfirmed(message, sizeof(uint32_t) /* header length */ + message->content_length, message->f_port);
+            if (DEBUG_LEVEL >= 3) {
+                printf("(send_result = %d) ", send_result);
+            }
+            if (send_result < 0) {
                 if (DEBUG_LEVEL >= 2) {
                     printf("lorawan_send_unconfirmed failed!!!\n");
                 }
 
                 failed_send_packet_count++;
                 return false;
+            }
+
+            if (DEBUG_LEVEL >= 3) {
+                printf("success!\n");
             }
 
             if (!message->guaranteed_delivery) {
@@ -504,14 +553,8 @@ bool transfer_data() {
             message_sent = true;
             failed_send_packet_count = 0;
 
-            if (DEBUG_LEVEL >= 3) {
-                printf("success!\n");
-            }
-
             message->send_time = get_us_since_boot();
         }
-
-        struct message_entry* next_message = message->next;
 
         while (message_sent) {
             // wait for up to 10 seconds for an event
@@ -645,10 +688,17 @@ void sync_time( bool initialize ) {
         sleep_ms(1); // Let the RTC stabiize
     }
 
+    if (DEBUG_LEVEL >= 3) {
+        printf("sync_time called with initialize = %s\n", initialize ? "true" : "false");
+    }
+
     while (1) {
         // First, send the message with our current time
         uint8_t time_sync[7];
         populate_time_sync(&time_sync[0]);
+        if (DEBUG_LEVEL >= 3) {
+            printf("calling first initialize on port 222\n");
+        }
         create_message_entry(222, !initialize, 0, &time_sync[0], 4 + (sizeof(time_sync) / sizeof(time_sync[0])));
 
         // If we're initializing then we want to block the sync_time call until we can set
@@ -657,7 +707,9 @@ void sync_time( bool initialize ) {
         // Oh well, we'll retry again soon as part of our regular time sync so no big deal
         if (initialize) {
             if (!transfer_data()) {
-                //$ join();
+                if (DEBUG_LEVEL >= 3) {
+                    printf("failed to transfer data!!!\n");
+                }
                 continue;
             }
 
@@ -666,9 +718,14 @@ void sync_time( bool initialize ) {
 
             // Go pick up the new timestamp
             populate_time_sync_nop(&time_sync[0]);
+            if (DEBUG_LEVEL >= 3) {
+                printf("calling second initialize on port 222\n");
+            }
             create_message_entry(222, false, 0, &time_sync[0], 4 + (sizeof(time_sync) / sizeof(time_sync[0])));
             if (!transfer_data()) {
-                //$ join();
+                if (DEBUG_LEVEL >= 3) {
+                    printf("failed to transfer data!!!\n");
+                }
                 continue;
             }
 
@@ -844,15 +901,28 @@ int main( void )
         printf("Pico LoRaWAN - OTAA - Temperature + LED\n\n");
     }
 
-    // If your device can't seem to connect then uncomment the line
+    // If the device can't seem to connect then uncomment the line
     // below to remove any existing device info
     // erase_nvm();
+
+    critical_section_enter_blocking(&free_queue_cri_sec);
+    for (int i = 0; i < MESSAGE_QUEUE_SIZE; i++) {
+        struct message_entry* message = (struct message_entry*) malloc(sizeof(struct message_entry));
+        message->next = free_queue;
+        free_queue = message;
+    }
+    critical_section_exit(&free_queue_cri_sec);
+
+    if (DEBUG_LEVEL >= 3) {
+        printf("Free heap available: %d\n", getFreeHeap());
+    }
 
     // initialize the LED pin and internal temperature ADC
     gpio_init(PICO_DEFAULT_LED_PIN);
     gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
 
     critical_section_init(&message_queue_cri_sec);
+    critical_section_init(&free_queue_cri_sec);
 
     internal_temperature_init();
 
