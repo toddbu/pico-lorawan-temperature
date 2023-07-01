@@ -126,6 +126,7 @@ struct message_entry {
   uint8_t content_length;
   uint64_t send_time;
   uint8_t dow;
+  uint16_t index;
   struct message_entry* next;
 };
 struct message_entry* message_queue = NULL;
@@ -295,6 +296,11 @@ void create_message_entry(uint8_t f_port, bool guaranteed_delivery, uint8_t type
     struct message_entry* message = free_queue;
     free_queue = free_queue->next;
     critical_section_exit(&free_queue_cri_sec);
+
+    if (message->index >= MESSAGE_QUEUE_SIZE) {
+        printf("message index of %d is greater than the message queue size of %d\n", message->index, MESSAGE_QUEUE_SIZE);
+        machine_reset();
+    }
 
     message->header =
         ((MESSAGE_VERSION & 0x07) << 29) |
@@ -478,7 +484,6 @@ bool transfer_data() {
     if (failed_send_packet_count > 5) {
         if (DEBUG_LEVEL >= 1) {
             printf("More than five failed lorawan_send_unconfirmed() calls in a row, resetting device");
-            sleep_ms(5000); // give time for the printf to complete
         }
         machine_reset();
     }
@@ -714,7 +719,7 @@ void sync_time( bool initialize ) {
             }
 
             // Wait for the server to send back a downlink with the offset
-            sleep_ms(10000);
+            lorawan_process_timeout_ms(10000);
 
             // Go pick up the new timestamp
             populate_time_sync_nop(&time_sync[0]);
@@ -789,7 +794,7 @@ void service_messages() {
             if (DEBUG_LEVEL >= 3) {
                 printf(".");
             }
-            sleep_ms(1000);
+            lorawan_process_timeout_ms(1000);
         }
 
         if (DEBUG_LEVEL >= 3) {
@@ -908,6 +913,7 @@ int main( void )
     critical_section_enter_blocking(&free_queue_cri_sec);
     for (int i = 0; i < MESSAGE_QUEUE_SIZE; i++) {
         struct message_entry* message = (struct message_entry*) malloc(sizeof(struct message_entry));
+        message->index = i;
         message->next = free_queue;
         free_queue = message;
     }
